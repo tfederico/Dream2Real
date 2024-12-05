@@ -42,7 +42,7 @@ To make Dream2Real easier to use, we have automated the installation steps so th
 
 **Step 2**: Clone this repository *(including submodules)* and enter the `dream2real` directory:
 ```
-git clone --recurse-submodules git@github.com:FlyCole/dream2real.git
+git clone --recurse-submodules https://github.com/tfederico/Dream2Real.git
 cd dream2real
 ```
 
