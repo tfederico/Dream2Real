@@ -2,7 +2,7 @@
 
 [ICRA 2024] **Dream2Real: Zero-Shot 3D Object Rearrangement with Vision-Language Models**<br/>Ivan Kapelyukh\*, Yifei Ren\*, Ignacio Alzugaray, Edward Johns <br/>
 (\* Joint first authorship) </br>
-[[Webpage]](https://www.robot-learning.uk/dream2real) [[Paper PDF]](https://arxiv.org/pdf/2312.04533.pdf)
+[[Webpage]](https://www.robot-learning.uk/dream2real) [[Paper PDF]](https://arxiv.org/pdf/2312.04533.pdf)  [[Original Repo]](https://github.com/FlyCole/Dream2Real/)
 
 <p align="center">
     <img src="teaser/video.gif">
