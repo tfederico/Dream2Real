@@ -19,7 +19,7 @@ pip install -r requirements.txt
 
 # Build Instant-NGP.
 cd reconstruction/instant-ngp
-cmake . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cmake -DCMAKE_CUDA_HOST_COMPILER=/usr/bin/g++-10 -Bbuild
 cmake --build build --config RelWithDebInfo -j
 cd ../..
 
@@ -39,7 +39,7 @@ done
 echo "Downloading cached method_out"
 mkdir method_out
 base_url="https://huggingface.co/datasets/FlyCole/Dream2Real/resolve/main/method_out"
-files=("pool_X" "pool_triangle" "shopping" "shelf")
+files=("pool_X" "pool_triangle" "shopping" "shelf")cmake -DCMAKE_CUDA_HOST_COMPILER=/usr/bin/g++-10 -Bbuild
 base_output_dir="./method_out"
 for file in "${files[@]}"; do
     output_dir="${base_output_dir}/${file}"
