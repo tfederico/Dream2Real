@@ -84,6 +84,11 @@ Example commands are shown below. If you get an error about `pyngp` not found, y
 export PYTHONPATH=./reconstruction/instant-ngp
 ```
 
+If you get an error related to `bitsandbytes`, try to update to the version 0.41:
+```
+pip install bitsandbites==0.41
+```
+
 #### Shopping
 ```
 python demo.py dataset/shopping method_out/shopping configs/shopping_demo.json "put the apple inside the blue and white bowl"
