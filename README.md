@@ -26,7 +26,7 @@ We introduce Dream2Real, a robotics framework which integrates vision-language m
 
 2. Hardware: we have tested on a 16 GB GPU (RTX 4080Ti SUPER). Only a single GPU is required. It is possible to run Dream2Real on GPUs with less memory by decreasing the batch sizes used, e.g. when batch-computing CLIP feature vectors for rendered images (at the cost of slower runtime). We also recommend leaving plenty of free space on your SSD/HDD before running, e.g. 60 GB if you wish to run every method/baseline on every dataset. This is because some intermediate output from the method takes a lot of space to store, e.g. video segmentation. However, you may delete this intermediate output after running Dream2Real, if you only care about the final goal pose.
 
-3. CUDA 12.5 (this code may also work with other versions such as CUDA 12 but this has not been thoroughly tested).
+3. CUDA 12.5 and NVCC 11.5.
 
 4. Miniconda (tested with conda 24.9.1).
 
@@ -42,7 +42,7 @@ To make Dream2Real easier to use, we have automated the installation steps so th
 
 **Step 1.5**: Install the folling dependencies:
 ```
-sudo apt install libcairo2-dev pkg-config python3-dev libgirepository1.0-dev
+sudo apt install libcairo2-dev pkg-config python3-dev libgirepository1.0-dev nvidia-cuda-toolkit g++-10
 ```
 
 **Step 2**: Clone this repository *(including submodules)* and enter the `dream2real` directory:
