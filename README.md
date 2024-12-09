@@ -22,13 +22,13 @@ We introduce Dream2Real, a robotics framework which integrates vision-language m
 
 ### Requirements
 
-1. Ubuntu 20.04 (this code may also work with other versions but has not been tested).
+1. Ubuntu 22.04 (this code may also work with other versions but has not been tested).
 
-2. Hardware: we have tested on a 24 GB GPU (RTX 4090). Only a single GPU is required. It is possible to run Dream2Real on GPUs with less memory by decreasing the batch sizes used, e.g. when batch-computing CLIP feature vectors for rendered images (at the cost of slower runtime). We also recommend leaving plenty of free space on your SSD/HDD before running, e.g. 60 GB if you wish to run every method/baseline on every dataset. This is because some intermediate output from the method takes a lot of space to store, e.g. video segmentation. However, you may delete this intermediate output after running Dream2Real, if you only care about the final goal pose.
+2. Hardware: we have tested on a 16 GB GPU (RTX 4080Ti SUPER). Only a single GPU is required. It is possible to run Dream2Real on GPUs with less memory by decreasing the batch sizes used, e.g. when batch-computing CLIP feature vectors for rendered images (at the cost of slower runtime). We also recommend leaving plenty of free space on your SSD/HDD before running, e.g. 60 GB if you wish to run every method/baseline on every dataset. This is because some intermediate output from the method takes a lot of space to store, e.g. video segmentation. However, you may delete this intermediate output after running Dream2Real, if you only care about the final goal pose.
 
-3. CUDA 11.7 (this code may also work with other versions such as CUDA 12 but this has not been thoroughly tested).
+3. CUDA 12.5 (this code may also work with other versions such as CUDA 12 but this has not been thoroughly tested).
 
-4. Miniconda (tested with conda 22.11.1).
+4. Miniconda (tested with conda 24.9.1).
 
 5. An OpenAI API key, with access to the [GPT-4 API](https://help.openai.com/en/articles/7102672-how-can-i-access-gpt-4), since we use this to process the user's language instruction. You will be prompted to enter this key during Dream2Real installation. It will be saved in a file `openai_key.sh` in the root directory of this repository. You may later move this file somewhere else. Remember to keep this key secret and do not publish it on GitHub. You can easily edit the code to use GPT-3.5 if you prefer.
 
@@ -39,6 +39,11 @@ We introduce Dream2Real, a robotics framework which integrates vision-language m
 To make Dream2Real easier to use, we have automated the installation steps so that all you need to do is clone the repo and run one script. Please follow these steps:
 
 **Step 1**: Check that the requirements above have been satisfied.
+
+**Step 1.5**: Install the folling dependencies:
+```
+sudo apt install libcairo2-dev pkg-config python3-dev libgirepository1.0-dev
+```
 
 **Step 2**: Clone this repository *(including submodules)* and enter the `dream2real` directory:
 ```
