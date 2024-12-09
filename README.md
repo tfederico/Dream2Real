@@ -57,6 +57,8 @@ bash install.sh
 ```
 
 This script might take some time to run (e.g. > 15 minutes), as it needs to set up a conda environment, build Instant-NGP, download datasets, etc. However, you can leave it to run automatically and get a coffee in the meantime!
+If the build of instant-ngp fails, you can run the steps manually, but make sure to run `conda activate dream2real` before, so it is built with the correct version of Python.
+
 
 ## Demo
 
@@ -77,7 +79,10 @@ USER_INSTR: The command to be executed by the robot.
 
 The demo script takes as input a scan of the scene performed by the robot, as well as a language command from the user. The output is a predicted goal pose for the object which the robot should move. This can be used as the goal pose for your robotic pick-and-place system. Note that the demo script uses cached intermediate outputs from the system (e.g. already trained NeRFs) so that you can quickly see the results. To run this without cache, set the "use cache" flags to false in the .json config file which you are using.
 
-Example commands are shown below.
+Example commands are shown below. If you get an error about `pyngp` not found, you might need to run:
+```
+export PYTHONPATH=./reconstruction/instant-ngp
+```
 
 #### Shopping
 ```
