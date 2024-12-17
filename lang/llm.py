@@ -1,9 +1,8 @@
 import os
 import json
 import re
-from transformers import pipeline
 import torch
-from transformers import AutoTokenizer, LlamaForCausalLM, AutoModelForCausalLM
+from transformers import LlamaForCausalLM, LlamaTokenizer
 
 
 class LangModel():
@@ -11,11 +10,8 @@ class LangModel():
         self.check_cache = read_cache
         self.cache_path = cache_path
         self.model_name = model_name
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-
-        model = AutoModelForCausalLM.from_pretrained(model_name)
-        self.model = pipeline("text-generation", model=model, device="cuda", torch_dtype=torch.float16, tokenizer=self.tokenizer)  # Use CPU; switch to CUDA if GPU is available
-
+        self.tokenizer = LlamaTokenizer.from_pretrained(model_name, torch_dtype=torch.float16, device_map="auto")
+        self.model = LlamaForCausalLM.from_pretrained(model_name, torch_dtype=torch.float16, device_map="auto")
 
         if cache_path:
             if os.path.exists(cache_path):
@@ -23,7 +19,7 @@ class LangModel():
             else:
                 self.cache = {}
 
-    def submit_prompt(self, prompt, temperature=0.0, silent=False):
+    def submit_prompt(self, prompt, temperature=0.6, silent=False):
         if self.cache_path and self.check_cache and prompt in self.cache.keys():
             if not silent:
                 print(f'Using response found in cache for prompt: "{prompt}"')
@@ -35,10 +31,28 @@ class LangModel():
             if not silent:
                 print(f'Submitting prompt to LLaMA: "{prompt}"')
 
-            # Generate response using LLaMA model
-            response = self.model(prompt, max_length=200, temperature=temperature, num_return_sequences=1)
-            completion = response[0]['generated_text']
+            try:
 
+                # Tokenize the input prompt
+                inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
+
+                # Generate output using the LLaMA model
+                output_ids = self.model.generate(
+                    **inputs,
+                    temperature=temperature,
+                    num_return_sequences=1,
+                    eos_token_id=self.tokenizer.eos_token_id,
+                    max_length=50,
+                )
+
+                # Decode the output tokens
+                completion = self.tokenizer.decode(output_ids[0], skip_special_tokens=True)
+
+            except Exception as e:
+                print(f"Error during prompt submission: {e}")
+                return ""
+
+            # Cache the result if caching is enabled
             if self.cache_path:
                 self.cache[prompt] = completion
                 json.dump(self.cache, open(self.cache_path, "w"), indent=4)
@@ -141,5 +155,8 @@ class LangModel():
 if __name__ == '__main__':
     # Test the langmodel
     model = LangModel(read_cache=False)
+    import time
+    start = time.time()
     result = model.submit_prompt("How many R are in strawberry?")
-    print(result)
+    end = time.time()
+    print(f'Time taken: {int(end - start)} seconds')
