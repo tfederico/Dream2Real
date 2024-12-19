@@ -9,3 +9,5 @@ models/
 dataset/
 method_out/
 openai_key.sh
+ghalton/
+pytorch3d/

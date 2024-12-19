@@ -74,8 +74,7 @@ tensorboard==1.15.0
 tensorboard-data-server==0.7.0
 tensorboard-plugin-wit==1.8.1
 tensorboardx==2.6
-thinplate==1.0.0
-torch-ema==0.3
+git+https://github.com/cheind/py-thin-plate-splinetorch-ema==0.3
 torchaudio==0.13.1
 torchmetrics==0.11.4
 transformers==4.30.2
