@@ -8,20 +8,21 @@ echo "Installing Dream2Real..."
 
 # Source conda configuration.
 # NOTE: replace this if your conda is installed elsewhere.
-# source ~/miniconda3/etc/profile.d/conda.sh
+source ~/miniconda3/etc/profile.d/conda.sh
 
-# conda create -y --name d2r python=3.11
-# conda activate d2r
+conda create -y --name d2r python=3.11
+conda activate d2r
 
-# # We need to install torch first separately because some packages use torch in setup.py.
-# conda install pytorch==2.4.0 torchvision==0.19.0 torchaudio==2.4.0 pytorch-cuda=12.4 -c pytorch -c nvidia
-# git clone https://github.com/facebookresearch/pytorch3d.git
-# cd pytorch3d && python setup.py install && pip install -e . # for some reason, without setup.py install it does not work
-# cd ..
-# git clone https://github.com/fmder/ghalton.git
-# cd ghalton && pip install -e .
-# cd ..
-# pip install -r requirements-chill-nv.txt
+# We need to install torch first separately because some packages use torch in setup.py.
+conda install -y pytorch==2.4.0 torchvision==0.19.0 torchaudio==2.4.0 pytorch-cuda=12.4 -c pytorch -c nvidia
+conda install -c conda-forge gcc=12.1.0
+git clone https://github.com/facebookresearch/pytorch3d.git
+cd pytorch3d && python setup.py install && pip install -e . # for some reason, without setup.py install it does not work
+cd ..
+git clone https://github.com/fmder/ghalton.git
+cd ghalton && pip install -e .
+cd ..
+pip install -r requirements-chill-nv.txt
 
 # Build Instant-NGP.
 cd reconstruction/instant-ngp

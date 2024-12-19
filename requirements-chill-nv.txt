@@ -4,7 +4,7 @@ asttokens
 bitsandbytes
 black
 chardet
-clip
+clip @ git+https://github.com/openai/CLIP.git@a9b1bf5920416aaeaec965c25dd9e8f98c864f16
 cloudpickle
 cmake
 comm
@@ -45,6 +45,7 @@ moviepy
 mss
 ninja
 nltk
+numpy==2.2
 open-clip-torch
 open3d
 openai
@@ -52,6 +53,7 @@ opt-einsum
 pip-chill
 progressbar2
 pure-eval
+pybullet==3.2.0
 pybullet-planning
 pycocotools
 pycollada
@@ -65,7 +67,7 @@ pytest
 python-version
 rich
 rtree
-segment-anything
+-e git+https://git@github.com/facebookresearch/segment-anything.git@6fdee8f2727f4506cfbbe553e23b895e27956588#egg=segment_anything
 shapely
 svg.path
 sympy
@@ -73,7 +75,7 @@ tensorboard
 tensorboard-data-server
 tensorboard-plugin-wit
 tensorboardx
-git+https://github.com/cheind/py-thin-plate-spline
+thinplate @ git+https://github.com/cheind/py-thin-plate-spline@f6995795397118b7d0ac01aecd3f39ffbfad9dee
 torch-ema
 torchaudio
 torchmetrics
