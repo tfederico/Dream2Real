@@ -189,7 +189,7 @@ def get_biggest_side(mask):
     max_contour = max(contours, key=len)
     rect = cv2.minAreaRect(max_contour)
     box = cv2.boxPoints(rect)
-    box = np.int0(box)
+    box = np.int_(box)
 
     box_width = np.linalg.norm(box[0] - box[1])
     box_height = np.linalg.norm(box[1] - box[2])
@@ -207,7 +207,7 @@ def get_smallest_side(mask):
     max_contour = max(contours, key=len)
     rect = cv2.minAreaRect(max_contour)
     box = cv2.boxPoints(rect)
-    box = np.int0(box)
+    box = np.int_(box)
 
     box_width = np.linalg.norm(box[0] - box[1])
     box_height = np.linalg.norm(box[1] - box[2])

@@ -86,7 +86,7 @@ class ImaginationEngine():
         if cfg.inpaint_holes:
             self.inpainter = StableDiffusionInpaintPipeline.from_pretrained("stabilityai/stable-diffusion-2-inpainting", requires_safety_checker=False).to("cuda")
 
-        self.lang_model = LangModel(cache_path=os.path.join(curr_dir_path, 'lang/cache.json'), read_cache=cfg.use_cache_llm)
+        self.lang_model = LangModel(read_cache=cfg.use_cache_llm, cache_path=os.path.join(curr_dir_path, 'lang/cache.json'))
 
         self.renderer = None
         # self.renderer = PointCloudRenderer()

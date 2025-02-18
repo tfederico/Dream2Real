@@ -2,10 +2,12 @@ import os
 import pdb
 import time
 import openai
+from openai import OpenAI
+
+client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 import json
 import re
 
-openai.api_key = os.environ["OPENAI_API_KEY"]
 
 class LangModel():
     # Note that this writes to the cache even if read_cache is False. That flag is only used for reading.
@@ -17,7 +19,7 @@ class LangModel():
             self.cache = json.load(open(cache_path, "r"))
 
     def submit_prompt(self, prompt, temperature=0.0, silent=False):
-        if self.cache_path and self.check_cache and prompt in self.cache.keys():
+        if self.check_cache and self.cache_path and prompt in self.cache.keys():
             if not silent:
                 print(f'Using response found in cache for prompt: "{prompt}"')
             completion = self.cache[prompt]
@@ -34,20 +36,18 @@ class LangModel():
             tries = 3
             while tries > 0:
                 try:
-                    response = openai.ChatCompletion.create(
-                        model="gpt-4",
-                        messages=[{"content": prompt, "role": "user"}],
-                        temperature=temperature,
-                        max_tokens=200,
-                    )
+                    response = client.chat.completions.create(model="gpt-4",
+                    messages=[{"content": prompt, "role": "user"}],
+                    temperature=temperature,
+                    max_tokens=200)
                     break
-                except (openai.error.APIError, openai.error.RateLimitError, openai.error.ServiceUnavailableError) as e:
+                except (openai.APIError, openai.RateLimitError) as e:
                     tries -= 1
                     if tries == 0:
                         raise e
                     time.sleep(0.5)
 
-            completion = response["choices"][0]["message"]["content"] # type: ignore
+            completion = response.choices[0].message.content # type: ignore
             if self.cache_path:
                 self.cache[prompt] = completion
                 json.dump(self.cache, open(self.cache_path, "w"), indent=4)
