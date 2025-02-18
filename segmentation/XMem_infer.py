@@ -225,7 +225,7 @@ class XMem_inference(object):
                 refined_masks.append(refined_mask)
 
                 # show visualised masks
-                mask_vis = imgviz.label2rgb(refined_mask)
+                mask_vis = imgviz.label2rgb(refined_mask.astype(int))
                 if show:
                     cv2.imshow("mask", mask_vis)
                     cv2.waitKey(1)

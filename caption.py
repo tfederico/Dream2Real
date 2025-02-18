@@ -23,7 +23,7 @@ class Captioner():
             self.model = Blip2ForConditionalGeneration.from_pretrained(
                 "Salesforce/blip2-opt-2.7b-coco", load_in_8bit=True, device_map='auto',
             )
-        self.batch_size = 200
+        self.batch_size = 100
         self.read_cache = read_cache
         self.cache_path = cache_path
         self.topdown = topdown

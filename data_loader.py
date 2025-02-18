@@ -40,7 +40,7 @@ class d2r_dataloader:
         size = len(T_WC)
         self.size = size
         self.rgb_data = torch.empty(size, self.height, self.width, 3, dtype=torch.uint8, device=self.data_device)
-        self.depth_data = torch.empty(size, self.height, self.width, dtype=torch.float16, device=self.data_device)
+        self.depth_data = torch.empty(size, self.height, self.width, dtype=torch.float32, device=self.data_device)
         self.T_WC_data = torch.empty(size, 4, 4, dtype=torch.float32, device=self.data_device)
 
         print("Loading RGBD data...")
@@ -55,7 +55,7 @@ class d2r_dataloader:
                 cv2.waitKey(1)
 
             color = cv2.cvtColor(color, cv2.COLOR_BGR2RGB)
-            depth = cv2.imread(depth_file, -1).astype(np.float16) / 1000
+            depth = cv2.imread(depth_file, -1).astype(np.float32) / 1000
 
             if color is None or depth is None:
                 print(rgb_file)
