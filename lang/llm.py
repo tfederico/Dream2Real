@@ -124,7 +124,7 @@ class LangModel():
                 relevant_idxs.append(relevant_idx)
 
         assert len(decisions) + 1 == len(
-            obj_captions), "Error: LLM returned wrong number of decisions for distractor status for objects"
+            obj_captions), f"Error: LLM returned wrong number of decisions for distractor status for objects. Expected {len(obj_captions)}, got {len(decisions)+1}."
         return relevant_idxs
 
     def aggregate_captions_for_obj(self, captions, silent=True):
