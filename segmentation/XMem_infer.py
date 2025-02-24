@@ -6,11 +6,11 @@ from tqdm import tqdm
 import pathlib
 curr_dir_path = pathlib.Path(__file__).parent.absolute()
 sys.path.append(os.path.join(curr_dir_path, "XMem"))
-from XMem.model.network import XMem
-from XMem.inference.inference_core import InferenceCore
-from XMem.inference.data.mask_mapper import MaskMapper
-from XMem.inference.interact.interactive_utils import image_to_torch, torch_prob_to_numpy_mask
-from XMem.inference.interact.interaction import ClickInteraction
+from model.network import XMem
+from inference.inference_core import InferenceCore
+from inference.data.mask_mapper import MaskMapper
+from inference.interact.interactive_utils import image_to_torch, torch_prob_to_numpy_mask
+from inference.interact.interaction import ClickInteraction
 
 from segmentation.sam_seg import Segmentor
 
