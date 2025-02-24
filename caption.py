@@ -12,16 +12,17 @@ import json
 from segmentation.sam_seg import get_thumbnail, mask_touches_edge
 from vis_utils import visimg
 import gc
-
+from transformers import BitsAndBytesConfig
 os.environ['BITSANDBYTES_NOWELCOME'] = '1'
 
 class Captioner():
     def __init__(self, topdown, device='cuda:0', read_cache=False, cache_path=None):
+        quantization_config = BitsAndBytesConfig(load_in_8bit=True)
         self.processor = Blip2Processor.from_pretrained("Salesforce/blip2-opt-2.7b-coco")
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             self.model = Blip2ForConditionalGeneration.from_pretrained(
-                "Salesforce/blip2-opt-2.7b-coco", load_in_8bit=True, device_map='auto',
+                "Salesforce/blip2-opt-2.7b-coco", quantization_config=quantization_config, device_map='auto',
             )
         self.batch_size = 100
         self.read_cache = read_cache
