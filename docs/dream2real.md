@@ -1,3 +1,4 @@
+```mermaid
 classDiagram
     class ImaginationEngine {
         -Config cfg
@@ -48,3 +49,4 @@ classDiagram
     TaskModel --> SceneModel : references
     TaskModel --> ObjectModel : references
     SceneModel --> ObjectModel : contains many
+```
