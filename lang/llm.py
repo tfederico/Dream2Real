@@ -28,7 +28,7 @@ class LangModel():
         if self.cache_path and self.check_cache and user_instr in self.cache.keys():
             if not silent:
                 print(f'Using response found in cache for prompt: "{user_instr}"')
-            completion = self.cache[(system_instr, user_instr)]
+            completion = self.cache[str((system_instr, user_instr))]
             if not silent:
                 print(f'Returning response: "{completion}"')
             return completion
@@ -61,7 +61,7 @@ class LangModel():
 
             # Cache the result if caching is enabled
             if self.cache_path:
-                self.cache[(system_instr, user_instr)] = completion
+                self.cache[str((system_instr, user_instr))] = completion
                 json.dump(self.cache, open(self.cache_path, "w"), indent=4)
 
             if not silent:
