@@ -28,6 +28,7 @@ from data_loader import d2r_dataloader
 from cfg import Config
 from termcolor import colored
 import argparse
+import json
 
 os.nice(1) # We're here to run fast, not to make friends.
 
@@ -217,12 +218,20 @@ class ImaginationEngine():
             single_view_idx=self.single_view_idx
         )
 
+        # save all_captions to file for debugging, a json with the object index as the key and the caption as the value
+        with open(os.path.join(self.data_dir, 'all_captions.json'), 'w') as f:
+            json.dump(all_captions, f)
+
         # Free captioner immediately after use
         self.captioner.free()
         self._init_lang_model()
 
         # Aggregate captions
-        captions = self.captioner.aggregate_captions(all_captions, self.lang_model)
+        captions = self.captioner.aggregate_captions(all_captions, self.lang_model, silent=True)
+
+        # save captions to file for debugging, a json with the object index as the key and the caption as the value
+        with open(os.path.join(self.data_dir, 'captions.json'), 'w') as f:
+            json.dump(captions, f)
         
         del self.captioner
         self.captioner = None
@@ -326,6 +335,7 @@ class ImaginationEngine():
             
         movable_obj, movable_obj_idx = self.determine_movable_obj(user_instr)
         relevant_objs = self.determine_relevant_objs(goal_caption, movable_obj_idx)
+
 
         # Free language model after use
         del self.lang_model
