@@ -199,7 +199,7 @@ class Captioner():
 
         return all_captions, debug_thumbnails
 
-    def aggregate_captions(self, all_captions, lang_model):
+    def aggregate_captions(self, all_captions, lang_model, silent=True):
         """Aggregate captions across views using language model.
         
         Args:
@@ -212,7 +212,7 @@ class Captioner():
         print('Aggregating captions across views...')
         agg_captions = []
         for obj_captions in tqdm(all_captions):
-            agg_caption = lang_model.aggregate_captions_for_obj(obj_captions, silent=True)
+            agg_caption = lang_model.aggregate_captions_for_obj(obj_captions, silent=silent)
             agg_captions.append(agg_caption)
         agg_captions.insert(0, '__background__')
 
