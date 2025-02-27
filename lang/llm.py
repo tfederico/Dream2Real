@@ -70,8 +70,8 @@ class LangModel():
 
     def get_principal_noun(self, caption):
         system_instr = (f'Suppose that you have an image caption describing a scene. What is the name of the most important '
-                        f'object in this scene? Please answer only with one word, the name of the object.\n"')
-        user_instr = system_instr + (f'Please answer only with one word, the name of the object. Caption: "{caption}."')
+                        f'object in this scene? Answer only with one word, the name of the object.\n"')
+        user_instr = system_instr + (f'Answer only with one word, the name of the object. Caption: "{caption}."')
         response = self.submit_prompt(system_instr=system_instr, user_instr=user_instr)
         response = response.lower().replace(".", "")
         return response
@@ -79,8 +79,9 @@ class LangModel():
     def get_movable_obj_idx(self, user_instr, obj_captions):
         system_instr = (f'You are a robot. There are some objects in the scene. The user gives you an instruction. '
                         f'Decide which one object the user wants the robot to move. Do not include any objects which should remain '
-                        f'unmoved (e.g. containers). Below, a description is given for each of the objects. You must answer with '
-                        f'only one number, the index of the object which should be moved.\n')
+                        f'unmoved (e.g. containers). Below, a description is given for each of the objects, with a correspondind index. '
+                        f'Do not include an explanation or commentary in your response. Your answer must be only one number, which corresponds to the index '
+                        f'of the object which should be moved.\n')
         user_instr = system_instr + (f'User instruction: "{user_instr}"\n')
         assert obj_captions[0] == "__background__"
         for i, caption in enumerate(obj_captions[1:]):  # Skip background
@@ -94,12 +95,11 @@ class LangModel():
         system_instr = (f'Suppose you are a robot. You are given a caption of a scene. Below, you are also given some object '
                         f'descriptions. For each object description, determine whether it is a distractor object. Return a separate line '
                         f'for each object containing Yes or No, where Yes means that it is a distractor. A distractor object is one '
-                        f'which cannot possibly be one of the objects mentioned in the scene caption. Be careful that the object descriptions '
+                        f'which is not one of the objects mentioned in the scene caption. Be careful that the object descriptions '
                         f'are based on low-quality images where the text is not easily identified, so ignore that part of the object descriptions. '
-                        f'If the object description could plausibly describe an object in the scene, you must return No. Each line in the response '
+                        f'If the object description could plausibly describe an object in the caption, you must return No. Each line in the response '
                         f'should have the format: Object <number>: Yes if the object is a distractor; Object <number>: No if the object is not a distractor. '
-                        f'But if none of the objects in the scene are distractors, the final line should '
-                        f'just be one word: "None".\n')
+                        f'Only if none of the objects in the scene are distractors, the final line should just be one word: "None".\n')
         assert obj_captions[0] == "__background__"
 
         # Temporarily swap object at idx 1 with movable object, so that LLM sees movable first.
@@ -130,9 +130,11 @@ class LangModel():
 
     def aggregate_captions_for_obj(self, captions, silent=True):
         system_instr = (f'Suppose we have captured many images of an object across different views. For each view, we have asked a network to '
-            f'caption the image. Some captions may be wrong, and there may be some other objects in view accidentally (e.g. inside or '
+            f'caption the image. Some captions may be wrong, and there may be some other objects in view accidentally (e.g. inside, nearby or '
             f'on top of the main object) which you must ignore. Please aggregate the caption information from across views, and write '
-            f'a caption which best describes the main object being captured. If the object can be a couple of things, mention them both.\n')
+            f'a caption which best describes the main object being captured. If the object can be a couple of things, mention them both, '
+            f'using a comma to separate multiple options. Do not include quotation marks and/or break lines in your response.'
+            f'The caption should be concise and to the point, and you should not provide any explanation or commentary.\n')
         user_instr = system_instr + (f'List of captions:\n')
         for caption in captions:
             user_instr += f'"{caption}"\n'
