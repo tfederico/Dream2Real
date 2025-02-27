@@ -225,7 +225,7 @@ class ImaginationEngine():
             json.dump(all_captions_dict, f)
 
         # Free captioner immediately after use
-        self.captioner.free()
+        self.captioner.free() # Free the actual captioner but not the pointer
         self._init_lang_model()
 
         # Aggregate captions
@@ -236,6 +236,7 @@ class ImaginationEngine():
         with open(os.path.join(self.data_dir, 'captions.json'), 'w') as f:
             json.dump(captions_dict, f)
         
+        # Free caption here because it uses the lang model
         del self.captioner
         self.captioner = None
         torch.cuda.empty_cache()
