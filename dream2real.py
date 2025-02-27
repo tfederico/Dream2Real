@@ -218,9 +218,11 @@ class ImaginationEngine():
             single_view_idx=self.single_view_idx
         )
 
+        all_captions_dict = {i: all_captions[i] for i in range(len(all_captions))}
+
         # save all_captions to file for debugging, a json with the object index as the key and the caption as the value
         with open(os.path.join(self.data_dir, 'all_captions.json'), 'w') as f:
-            json.dump(all_captions, f)
+            json.dump(all_captions_dict, f)
 
         # Free captioner immediately after use
         self.captioner.free()
@@ -228,10 +230,11 @@ class ImaginationEngine():
 
         # Aggregate captions
         captions = self.captioner.aggregate_captions(all_captions, self.lang_model, silent=True)
+        captions_dict = {i: captions[i] for i in range(len(captions))}
 
         # save captions to file for debugging, a json with the object index as the key and the caption as the value
         with open(os.path.join(self.data_dir, 'captions.json'), 'w') as f:
-            json.dump(captions, f)
+            json.dump(captions_dict, f)
         
         del self.captioner
         self.captioner = None
