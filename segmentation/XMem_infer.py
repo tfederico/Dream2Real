@@ -30,16 +30,31 @@ class XMem_inference(object):
         self.config = self.load_config(config_file)
         self.model_pth = self.config['model_pth']
         self.num_objects = self.config['num_objects']
-        torch.autograd.set_grad_enabled(False)
-        network = XMem(self.config, self.model_pth).cuda().eval()
-        self.mapper = MaskMapper()
-        self.processor = InferenceCore(network, config=self.config)
-        self.processor.set_all_labels(list(range(1, self.num_objects + 1)))
-        self.first_mask_loaded = self.config['first_mask_loaded']
-        self.size = self.config['size']
-        self.num_objects = self.config['num_objects']
-        self.sam_segmentor = Segmentor()
+        
+        # Initialize attributes as None first
+        self.processor = None
+        self.sam_segmentor = None
+        self.mapper = None
+        
+        # Initialize components
+        self._init_components()
+        
         print("XMem_inference initialized")
+
+    def _init_components(self):
+        """Initialize XMem components"""
+        try:
+            torch.autograd.set_grad_enabled(False)
+            network = XMem(self.config, self.model_pth).cuda().eval()
+            self.mapper = MaskMapper()
+            self.processor = InferenceCore(network, config=self.config)
+            self.processor.set_all_labels(list(range(1, self.num_objects + 1)))
+            self.first_mask_loaded = self.config['first_mask_loaded']
+            self.size = self.config['size']
+            self.sam_segmentor = Segmentor()
+        except Exception as e:
+            print(f"Error initializing XMem components: {e}")
+            raise
 
     def load_config(self, config_file):
         with open(config_file, 'r') as f:
@@ -244,14 +259,26 @@ class XMem_inference(object):
         return refined_masks
 
     def free(self):
-        self.sam_segmentor.free()
-        # print(f'Memory usage before freeing XMem: {torch.cuda.memory_allocated(0)}')
-        self.processor.network.cpu()
-        del self.mapper
-        del self.processor
-        gc.collect()
-        torch.cuda.empty_cache()
-        # print(f'Memory usage after freeing XMem: {torch.cuda.memory_allocated(0)}')
+        """Safely free GPU memory"""
+        try:
+            if hasattr(self, 'sam_segmentor') and self.sam_segmentor is not None:
+                self.sam_segmentor.free()
+                self.sam_segmentor = None
+            
+            if hasattr(self, 'processor') and self.processor is not None:
+                if hasattr(self.processor, 'network'):
+                    self.processor.network.cpu()
+                del self.processor
+                self.processor = None
+            
+            if hasattr(self, 'mapper'):
+                del self.mapper
+                self.mapper = None
+                
+        except Exception as e:
+            print(f"Warning: Error during XMem cleanup: {e}")
+        finally:
+            torch.cuda.empty_cache()
 
 def integrate_masks(sam_masks):
     out_mask = torch.zeros_like(sam_masks[0], dtype=torch.uint8)

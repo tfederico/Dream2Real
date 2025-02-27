@@ -16,20 +16,40 @@ import pdb
 
 class Segmentor():
     def __init__(self, device="cuda:0"):
-        total_memory_gb = torch.cuda.get_device_properties(device).total_memory / (1024 ** 3)
-        if total_memory_gb > 10:
-            self.sam = sam_model_registry["vit_h"](checkpoint=os.path.join(working_dir, "models/sam_vit_h_4b8939.pth")).to(device)
-        else:
-            self.sam = sam_model_registry["vit_b"](checkpoint=os.path.join(working_dir, "models/sam_vit_b_01ec64.pth")).to(device)
-        self.mask_generator = SamAutomaticMaskGenerator(model=self.sam,
-                                                        points_per_side=48,
-                                                        pred_iou_thresh=0.95,
-                                                        stability_score_thresh=0.90,
-                                                        crop_n_layers=2,
-                                                        crop_n_points_downscale_factor=2,
-                                                        crop_nms_thresh=0.95,
-                                                        min_mask_region_area=120,)
+        # Initialize attributes as None first
+        self.sam = None
+        self.mask_generator = None
         self.device = device
+        
+        # Initialize SAM model
+        self._init_sam()
+
+    def _init_sam(self):
+        """Initialize SAM model"""
+        try:
+            total_memory_gb = torch.cuda.get_device_properties(self.device).total_memory / (1024 ** 3)
+            if total_memory_gb > 10:
+                self.sam = sam_model_registry["vit_h"](
+                    checkpoint=os.path.join(working_dir, "models/sam_vit_h_4b8939.pth")
+                ).to(self.device)
+            else:
+                self.sam = sam_model_registry["vit_b"](
+                    checkpoint=os.path.join(working_dir, "models/sam_vit_b_01ec64.pth")
+                ).to(self.device)
+                
+            self.mask_generator = SamAutomaticMaskGenerator(
+                model=self.sam,
+                points_per_side=48,
+                pred_iou_thresh=0.95,
+                stability_score_thresh=0.90,
+                crop_n_layers=2,
+                crop_n_points_downscale_factor=2,
+                crop_nms_thresh=0.95,
+                min_mask_region_area=120,
+            )
+        except Exception as e:
+            print(f"Error initializing SAM model: {e}")
+            raise
 
     def subpart_suppression(self, masks, threshold=0.1):
         # For any pair of objects, if (subpart_threshold) of one is inside the other, keep the other.
@@ -138,13 +158,21 @@ class Segmentor():
         return obj_img
 
     def free(self):
-        # print(f'Memory usage before freeing SAM: {torch.cuda.memory_allocated(0)}')
-        self.sam = self.sam.to('cpu')
-        del self.sam
-        del self.mask_generator
-        gc.collect()
-        torch.cuda.empty_cache()
-        # print(f'Memory usage after freeing SAM: {torch.cuda.memory_allocated(0)}')
+        """Safely free GPU memory"""
+        try:
+            if hasattr(self, 'sam') and self.sam is not None:
+                self.sam = self.sam.to('cpu')
+                del self.sam
+                self.sam = None
+            
+            if hasattr(self, 'mask_generator'):
+                del self.mask_generator
+                self.mask_generator = None
+                
+        except Exception as e:
+            print(f"Warning: Error during SAM cleanup: {e}")
+        finally:
+            torch.cuda.empty_cache()
 
 # Returns centre in (i, j) coordinates, rather than (x, y).
 def centre_of_mass(binary_image):
