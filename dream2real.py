@@ -77,16 +77,13 @@ class ImaginationEngine():
         self.captioner_device = "cuda:0"
 
         self.scene_model = None
-        self.segmentor = XMem_inference()
+        self.segmentor = None
         self.caption = cfg.caption
-        if cfg.caption:
-            self.captioner = Captioner(topdown=self.topdown, device=self.captioner_device, read_cache=self.use_cache_captions, cache_path=os.path.join(self.data_dir, 'captions.json'))
         self.inpaint = cfg.inpaint_holes
         self.visseg = cfg.visseg
-        if cfg.inpaint_holes:
-            self.inpainter = StableDiffusionInpaintPipeline.from_pretrained("stabilityai/stable-diffusion-2-inpainting", requires_safety_checker=False).to("cuda")
+        self.inpainter = None
 
-        self.lang_model = LangModel(cache_path=os.path.join(curr_dir_path, 'lang/cache.json'), read_cache=cfg.use_cache_llm)
+        self.lang_model = None
 
         self.renderer = None
         # self.renderer = PointCloudRenderer()
@@ -97,6 +94,48 @@ class ImaginationEngine():
         self.scene_centre = cfg.scene_centre
         self.scene_phys_bounds = cfg.scene_phys_bounds  # Format: x_min, y_min, z_min, x_max, y_max, z_max
         self.sample_res = cfg.sample_res
+
+        # Move model initialization to when they're needed
+        self.segmentor = None
+        self.captioner = None
+        self.inpainter = None
+        self.lang_model = None
+        self.renderer = None
+
+        # Add GPU memory management
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        torch.cuda.empty_cache()  # Clear GPU cache at start
+
+    def _init_segmentor(self):
+        """Lazy initialization of segmentor"""
+        if self.segmentor is None:
+            self.segmentor = XMem_inference()
+
+    def _init_captioner(self):
+        """Lazy initialization of captioner"""
+        if self.captioner is None and self.cfg.caption:
+            self.captioner = Captioner(
+                topdown=self.topdown, 
+                device=self.captioner_device, 
+                read_cache=self.use_cache_captions,
+                cache_path=os.path.join(self.data_dir, 'captions.json')
+            )
+
+    def _init_inpainter(self):
+        """Lazy initialization of inpainter"""
+        if self.inpainter is None and self.cfg.inpaint_holes:
+            self.inpainter = StableDiffusionInpaintPipeline.from_pretrained(
+                "stabilityai/stable-diffusion-2-inpainting",
+                requires_safety_checker=False
+            ).to(self.device)
+
+    def _init_lang_model(self):
+        """Lazy initialization of language model"""
+        if self.lang_model is None:
+            self.lang_model = LangModel(
+                cache_path=os.path.join(curr_dir_path, 'lang/cache.json'),
+                read_cache=self.cfg.use_cache_llm
+            )
 
     def build_scene_model(self, raw_data=None):
         """Build scene model from raw data.
@@ -109,6 +148,11 @@ class ImaginationEngine():
 
         """
         print('Building scene model...')
+        torch.cuda.empty_cache()  # Clear GPU cache before heavy operations
+
+        # Initialize needed models
+        self._init_segmentor()
+        
         intrinsics = INTRINSICS_REALSENSE_1280
         dataloader = d2r_dataloader(self.cfg)
         rgbs, depths, raw_cam_poses = dataloader.load_rgbds() if raw_data is None else raw_data
@@ -132,7 +176,13 @@ class ImaginationEngine():
                                                      debug=False)
         else:
             masks = self.segmentor.segment(rgbs, depths, self.data_dir, show=self.visseg, use_cache=self.use_cache_segs)
+        
+        # Free segmentor immediately after use
         self.segmentor.free()
+        self.segmentor = None
+        torch.cuda.empty_cache()
+
+        # Process masks
         masks = [torch.tensor(mask) for mask in masks]
         masks = torch.stack(masks, dim=0)
 
@@ -158,11 +208,30 @@ class ImaginationEngine():
                                                     save_dir=os.path.join(self.data_dir, 'phys_mods/'),
                                                     vis=not self.use_cache_phys, use_cache=self.use_cache_phys,
                                                     use_phys_tsdf=self.use_phys_tsdf)
+        self._init_captioner()
+        # Get individual captions
+        all_captions, thumbnails = self.captioner.get_object_captions(
+            num_objs, rgbs, masks, self.out_scene_bound_masks,
+            topdown=self.topdown, 
+            multi_view=self.multi_view_captions,
+            single_view_idx=self.single_view_idx
+        )
 
-        captions, thumbnails = self.captioner.caption_objs(num_objs, rgbs, masks, self.lang_model, self.out_scene_bound_masks,
-                                                           topdown=self.topdown, multi_view=self.multi_view_captions,
-                                                           single_view_idx=self.single_view_idx)
+        # Free captioner immediately after use
         self.captioner.free()
+        self._init_lang_model()
+
+        # Aggregate captions
+        captions = self.captioner.aggregate_captions(all_captions, self.lang_model)
+        
+        del self.captioner
+        self.captioner = None
+        torch.cuda.empty_cache()
+
+        # Free language model after use
+        del self.lang_model
+        self.lang_model = None
+        torch.cuda.empty_cache()
 
         # Visual models are created lazily once task is known.
         vis_models = [None] * num_objs
@@ -175,6 +244,21 @@ class ImaginationEngine():
 
         self.scene_model = SceneModel(self.scene_centre, objs, objs[0], rgbs, depths, opt_cam_poses,
                                       intrinsics, masks, self.scene_phys_bounds, self.scene_type, device=device)
+
+        # Safely free models
+        try:
+            if self.segmentor:
+                self.segmentor.free()
+        except Exception as e:
+            print(f"Warning: Error freeing segmentor: {e}")
+        finally:
+            self.segmentor = None
+            torch.cuda.empty_cache()
+
+        if self.renderer:
+            del self.renderer
+            self.renderer = None
+            torch.cuda.empty_cache()
 
     def determine_movable_obj(self, user_instr):
         """Determine which object is movable based on user instruction.
@@ -228,18 +312,25 @@ class ImaginationEngine():
             task_model: TaskModel for the task
 
         """
-        if self.scene_model is None:
-            raise RuntimeError("Must call build_scene_model() first before receiving user instructions")
+        torch.cuda.empty_cache()
 
+        # Initialize language model when needed
+        self._init_lang_model()
+        
+        # Use language model
         if goal_caption is None:
-            print('Attempting to infer goal caption and normalising caption automatically from user instruction...')
             goal_caption, norm_caption = self.lang_model.parse_instr(user_instr)
-            print(colored('User instruction: ', 'green'), user_instr)
             print(colored('Goal caption: ', 'green'), goal_caption)
             print(colored('Normalised caption: ', 'green'), norm_caption)
             norm_captions = [norm_caption]
+            
         movable_obj, movable_obj_idx = self.determine_movable_obj(user_instr)
         relevant_objs = self.determine_relevant_objs(goal_caption, movable_obj_idx)
+
+        # Free language model after use
+        del self.lang_model
+        self.lang_model = None
+        torch.cuda.empty_cache()
 
         # Create these before visual models since phys mods need memory during construction, but fine afterwards.
         if self.lazy_phys_mods:
@@ -290,6 +381,12 @@ class ImaginationEngine():
             best_pose: best pose for movable object
 
         """
+        torch.cuda.empty_cache()
+
+        # Initialize renderer only when needed
+        if self.renderer is None and self.use_vis_pcds and not self.use_cache_goal_pose:
+            self.renderer = PointCloudRenderer()
+
         movable_init_pose = task_model.movable_obj.pose
         # Defining validity checks.
         # Takes in list of check functions, and returns a function that composes them.
@@ -399,8 +496,43 @@ class ImaginationEngine():
                         mesh.transform(pose_transform.numpy())
                 o3d.visualization.draw_geometries(meshes)
 
+        # Free renderer after use
+        if self.renderer:
+            del self.renderer
+            self.renderer = None
+            torch.cuda.empty_cache()
+
         return best_pose
 
+    def __del__(self):
+        """Cleanup when object is destroyed"""
+        # Free all models with proper error handling
+        try:
+            if self.segmentor:
+                self.segmentor.free()
+        except Exception as e:
+            print(f"Warning: Error freeing segmentor during cleanup: {e}")
+        finally:
+            self.segmentor = None
+
+        try:
+            if self.captioner:
+                self.captioner.free()
+        except Exception as e:
+            print(f"Warning: Error freeing captioner during cleanup: {e}")
+        finally:
+            self.captioner = None
+
+        try:
+            if self.inpainter:
+                del self.inpainter
+            if self.renderer:
+                del self.renderer
+        except Exception as e:
+            print(f"Warning: Error during final cleanup: {e}")
+        finally:
+            # Clear CUDA cache
+            torch.cuda.empty_cache()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
