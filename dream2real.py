@@ -544,9 +544,7 @@ class ImaginationEngine():
                 del self.renderer
         except Exception as e:
             print(f"Warning: Error during final cleanup: {e}")
-        finally:
-            # Clear CUDA cache
-            torch.cuda.empty_cache()
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
