@@ -138,34 +138,65 @@ class ImaginationEngine():
                 read_cache=self.cfg.use_cache_llm
             )
 
-    def build_scene_model(self, raw_data=None):
-        """Build scene model from raw data.
-
+    def prepare_scene_data(self, raw_data=None):
+        """Prepare scene data by segmenting and captioning.
+        
         Args:
-            raw_data: raw RGBD data. If None, loads from data_dir.
+            raw_data: Optional tuple of (rgbs, depths, raw_cam_poses)
+            
+        Returns:
+            dict: Scene data including masks, objects, captions, etc.
+        """
+        print('Preparing scene data...')
+        torch.cuda.empty_cache()
 
+        # Load and segment data
+        masks, num_objs, rgbs, depths, intrinsics = self._segment_scene(raw_data)
+
+        # Get captions for objects
+        captions, thumbnails = self._get_captions(num_objs, masks, rgbs)
+
+        return {
+            'masks': masks,
+            'num_objs': num_objs,
+            'rgbs': rgbs,
+            'depths': depths,
+            'intrinsics': intrinsics,
+            'captions': captions,
+            'thumbnails': thumbnails
+        }
+
+    def build_scene_model(self, scene_data=None):
+        """Build scene model from prepared data.
+        
+        Args:
+            scene_data: Dict containing scene data. If None, calls prepare_scene_data()
+            
         Returns:
             None
         """
         print('Building scene model...')
         torch.cuda.empty_cache()
 
-        # Load and segment data
-        masks, num_objs, rgbs, depths, intrinsics = self._segment_scene(raw_data)
+        # Get scene data if not provided
+        if scene_data is None:
+            scene_data = self.prepare_scene_data()
 
         # Get physical and visual models
         phys_models, init_poses, vis_models, opt_cam_poses = self._get_models(
-            masks, num_objs, depths, intrinsics
+            scene_data['masks'], 
+            scene_data['num_objs'], 
+            scene_data['depths'], 
+            scene_data['intrinsics']
         )
-
-        # Get captions for objects
-        captions, thumbnails = self._get_captions(num_objs, masks, rgbs)
 
         # Build final scene model
         self._build_visual_models(
-            masks, num_objs, captions, thumbnails, 
+            scene_data['masks'], scene_data['num_objs'],
+            scene_data['captions'], scene_data['thumbnails'],
             phys_models, init_poses, vis_models,
-            rgbs, depths, opt_cam_poses, intrinsics
+            scene_data['rgbs'], scene_data['depths'],
+            opt_cam_poses, scene_data['intrinsics']
         )
 
     def _segment_scene(self, raw_data=None):

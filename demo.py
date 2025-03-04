@@ -39,11 +39,24 @@ if __name__ == "__main__":
     if not os.path.isdir(os.path.join(args.out_dir, "images")):
         os.system(f'cp -r {args.data_dir}/* {args.out_dir}')
 
-    # Run the method.
+    # Run the method
     print(f'Running with config: {args.cfg_path}')
     imagination = ImaginationEngine(cfg)
-    imagination.build_scene_model()
-    task_model = imagination.interpret_user_instr(user_instr, goal_caption=goal_caption, norm_captions=norm_captions)
+    
+    # Prepare scene data
+    scene_data = imagination.prepare_scene_data()
+    
+    # Build scene model
+    imagination.build_scene_model(scene_data)
+    
+    # Process user instruction
+    task_model = imagination.interpret_user_instr(
+        user_instr, 
+        goal_caption=goal_caption, 
+        norm_captions=norm_captions
+    )
+    
+    # Find best pose
     movable_best_pose = imagination.dream_best_pose(task_model)
     print(colored("Predicted pose for movable object:", "green"))
     print(movable_best_pose)
