@@ -24,44 +24,6 @@ device = torch.device("cuda:0")
 
 CLIP_RES = 336
 
-# For some older experiments.
-def composite_images(objs, bground_idx):
-    bground = objs[bground_idx]
-    objs = [obj for i, obj in enumerate(objs) if i != bground_idx]
-    bground_img = bground.obj_crop.permute(2, 0, 1)
-    if bground_img.shape[0] == 3: # Add alpha channel.
-        bground_img = torch.concat((bground_img, torch.full((1, bground_img.shape[1], bground_img.shape[2]), 255).to(device)), axis=0)
-
-    composite = bground_img.clone()
-    for obj in objs:
-        # Slow but safe.
-        obj_img = obj.obj_crop.permute(2, 0, 1).clone()
-        if obj_img.shape[0] == 3: # Add alpha channel.
-            obj_img = torch.concat((obj_img, torch.full((1, obj_img.shape[1], obj_img.shape[2]), 255).to(device)), axis=0)
-
-        # Rescale object first.
-        scale = 1.0
-        obj_img = resize(obj_img, (int(obj_img.shape[1] * scale), int(obj_img.shape[2] * scale)), interpolation=InterpolationMode.BILINEAR)
-
-        # Pad obj to same size as background.
-        just_obj = obj_img
-        obj_img = torch.zeros_like(bground_img)
-        obj_img[:, :just_obj.shape[1], :just_obj.shape[2]] = just_obj
-
-        # Move obj to centre of background and then to pose.
-        T_to_centre = (bground_img.shape[2] // 2 - just_obj.shape[2] // 2, bground_img.shape[1] // 2 - just_obj.shape[1] // 2)
-
-        # Rescale pose.
-        pose = obj.pos
-        pose = (pose[0] * bground_img.shape[2] // 2, -1 * pose[1] * bground_img.shape[1] // 2)
-
-        T_to_pose = (pose[0] + T_to_centre[0], pose[1] + T_to_centre[1])
-        obj_img = affine(obj_img, 0, T_to_pose, 1.0, 0, interpolation=InterpolationMode.NEAREST, fill=(0, 0, 0, 0))
-        # Overwrite pixels in composite with non-transparent pixels in image.
-        composite[:-1, :, :] = torch.where(obj_img[-1, :, :] > 0.9, obj_img[:-1, :, :], composite[:-1, :, :])
-
-    return composite
-
 
 def normalise_tensor(x):
     x -= x.min()
