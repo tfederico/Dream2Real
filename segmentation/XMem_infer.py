@@ -412,11 +412,14 @@ class XMem_inference(object):
         Returns:
             numpy.ndarray: A single integrated mask where each region corresponds to a unique index.
         """
-        out_mask = torch.zeros_like(sam_masks[0], dtype=torch.uint8)  # Initialize an output mask with the same shape as the first mask
-        for idx in range(len(sam_masks)):
-            out_mask[sam_masks[idx]] = idx  # Assign the index to the corresponding mask region
+        # Initialize an output mask with the same shape as the first mask
+        integrated_mask = torch.zeros_like(sam_masks[0], dtype=torch.uint8)
 
-        return out_mask.cpu().numpy()  # Return the integrated mask as a NumPy array
+        # Iterate through each mask and assign a unique index
+        for index, mask in enumerate(sam_masks):
+            integrated_mask[mask] = index  # Assign the index to the corresponding mask region
+
+        return integrated_mask.cpu().numpy()  # Return the integrated mask as a NumPy array
 
 
 
