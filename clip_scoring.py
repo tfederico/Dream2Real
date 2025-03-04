@@ -87,58 +87,10 @@ def optimise_pose_grid(renderer,
     pose_batch = sample_poses_grid(task_model, sample_res, scene_type=scene_type)
 
     if use_cache_renders:
-        print('Using cached renders')
-        old_pose_scores = torch.from_numpy(np.loadtxt(os.path.join(data_dir, 'pose_scores.txt')))
-        is_valid = old_pose_scores.bool()
-        valid_idxs = torch.nonzero(old_pose_scores).squeeze(-1)
-        valid_poses = pose_batch[valid_idxs]
-
-        render_dir = os.path.join(data_dir, 'cb_render')
-        print('Reading renders from disk...')
-        renders = []
-        for filename in tqdm(sorted(os.listdir(render_dir))):
-            render_path = os.path.join(render_dir, filename)
-            render = cv2.imread(render_path)
-            render = cv2.cvtColor(render, cv2.COLOR_BGR2RGB)
-            renders.append(render)
-        assert len(renders) == valid_poses.shape[0], f'Expected {valid_poses.shape[0]} renders, got {len(renders)}. Try running without use_cache_renders.'
+        renders, valid_poses, valid_idxs = load_cached_renders(data_dir, pose_batch)
     else:
-        print('Using CLIP templates' if use_templates else 'Not using CLIP templates')
-
-        print('Running pre-render checks...')
-        valid_so_far = torch.ones(pose_batch.shape[0]).bool().to(device)
-        is_valid = phys_check(pose_batch, task_model, valid_so_far)
-        valid_idxs = torch.nonzero(is_valid).squeeze(-1)
-        valid_poses = pose_batch[valid_idxs]
-        print(f'Of {pose_batch.shape[0]} sampled poses, {valid_idxs.shape[0]} passed pre-render checks ({100 * valid_idxs.shape[0] / pose_batch.shape[0]:.2f}%).')
-
-        if valid_idxs.shape[0] == 0:
-            print('No poses passed pre-render checks. Exiting.')
-            raise Exception
-
-        # Physics only baseline method to ouput random best pose.
-        if physics_only:
-            print('Physics only method')
-            best_pose_idx = torch.randint(valid_idxs.shape[0], (1,)).item()
-            best_pose = valid_poses[best_pose_idx]
-            best_pose = best_pose.view(4, 4)
-            return best_pose, pose_batch, torch.ones(pose_batch.shape[0])
-
-        from vision_3d.virtual_cam_pose_sample import get_virtual_cam_poses
-        render_poses = get_virtual_cam_poses(task_model, render_cam_pose_idx)
-        if use_vis_pcds:
-            print('Rendering images from pcds...')
-            renders = renderer.render(render_poses[0], valid_poses, task_model, hide_movable=False)
-        else:
-            print('Rendering images from ngp...')
-            render_poses_ngp = accio2ngp.converter(render_poses)
-            valid_poses_ngp = accio2ngp.converter(valid_poses.cpu().numpy().reshape(-1, 4, 4))
-            renders = renderer.render(valid_poses_ngp,
-                                      render_poses_ngp,
-                                      render_cam_pose_idx,
-                                      depths_gt,
-                                      task_model.movable_masks,
-                                      save=True)
+        valid_poses, valid_idxs = run_pre_render_checks(pose_batch, task_model, phys_check)
+        renders = render_images(renderer, valid_poses, render_cam_pose_idx, depths_gt, task_model, use_vis_pcds)
 
     task_model.free_visual_models() # To save memory for CLIP.
     # Clipifying images.
@@ -233,3 +185,55 @@ def optimise_pose_grid(renderer,
     # del renders
 
     return best_pose.view(4, 4), pose_batch, pose_scores
+
+def load_cached_renders(data_dir, pose_batch):
+    print('Using cached renders')
+    old_pose_scores = torch.from_numpy(np.loadtxt(os.path.join(data_dir, 'pose_scores.txt')))
+    is_valid = old_pose_scores.bool()
+    valid_idxs = torch.nonzero(old_pose_scores).squeeze(-1)
+    valid_poses = pose_batch[valid_idxs]
+
+    render_dir = os.path.join(data_dir, 'cb_render')
+    print('Reading renders from disk...')
+    renders = []
+    for filename in tqdm(sorted(os.listdir(render_dir))):
+        render_path = os.path.join(render_dir, filename)
+        render = cv2.imread(render_path)
+        render = cv2.cvtColor(render, cv2.COLOR_BGR2RGB)
+        renders.append(render)
+    assert len(renders) == valid_poses.shape[0], f'Expected {valid_poses.shape[0]} renders, got {len(renders)}. Try running without use_cache_renders.'
+    
+    return renders, valid_poses, valid_idxs
+
+def run_pre_render_checks(pose_batch, task_model, phys_check):
+    print('Running pre-render checks...')
+    valid_so_far = torch.ones(pose_batch.shape[0]).bool().to(device)
+    is_valid = phys_check(pose_batch, task_model, valid_so_far)
+    valid_idxs = torch.nonzero(is_valid).squeeze(-1)
+    valid_poses = pose_batch[valid_idxs]
+    print(f'Of {pose_batch.shape[0]} sampled poses, {valid_idxs.shape[0]} passed pre-render checks ({100 * valid_idxs.shape[0] / pose_batch.shape[0]:.2f}%).')
+
+    if valid_idxs.shape[0] == 0:
+        print('No poses passed pre-render checks. Exiting.')
+        raise Exception
+
+    return valid_poses, valid_idxs
+
+def render_images(renderer, valid_poses, render_cam_pose_idx, depths_gt, task_model, use_vis_pcds):
+    from vision_3d.virtual_cam_pose_sample import get_virtual_cam_poses
+    render_poses = get_virtual_cam_poses(task_model, render_cam_pose_idx)
+    
+    if use_vis_pcds:
+        print('Rendering images from pcds...')
+        renders = renderer.render(render_poses[0], valid_poses, task_model, hide_movable=False)
+    else:
+        print('Rendering images from ngp...')
+        render_poses_ngp = accio2ngp.converter(render_poses)
+        valid_poses_ngp = accio2ngp.converter(valid_poses.cpu().numpy().reshape(-1, 4, 4))
+        renders = renderer.render(valid_poses_ngp,
+                                  render_poses_ngp,
+                                  render_cam_pose_idx,
+                                  depths_gt,
+                                  task_model.movable_masks,
+                                  save=True)
+    return renders
