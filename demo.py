@@ -50,10 +50,19 @@ if __name__ == "__main__":
     imagination.build_scene_model(scene_data)
     
     # Process user instruction
-    task_model = imagination.interpret_user_instr(
+    components = imagination.process_instruction(
         user_instr, 
         goal_caption=goal_caption, 
         norm_captions=norm_captions
+    )
+    
+    # Create task model
+    task_model = imagination.create_task_model( 
+        components['movable_obj'], 
+        components['relevant_objs'], 
+        user_instr, 
+        components['goal_caption'], 
+        components['norm_captions']
     )
     
     # Find best pose

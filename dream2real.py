@@ -406,31 +406,9 @@ class ImaginationEngine():
         relevant_objs = [self.scene_model.objs[idx] for idx in relevant_idxs]
         return relevant_objs
 
-    def interpret_user_instr(self, user_instr, goal_caption=None, norm_captions=None):
-        """Interpret user instruction and return task model.
-
-        Args:
-            user_instr: user instruction string
-            goal_caption: goal caption string
-            norm_captions: list of normalised caption strings
-
-        Returns:
-            task_model: TaskModel for the task
-        """
-        # Parse instruction and determine relevant objects
-        movable_obj, relevant_objs, goal_caption, norm_captions = self._parse_instruction(
-            user_instr, goal_caption, norm_captions
-        )
-
-        # Create task model with determined objects
-        task_model = self._create_task_model(
-            movable_obj, relevant_objs, user_instr, goal_caption, norm_captions
-        )
-
-        return task_model
-
-    def _parse_instruction(self, user_instr, goal_caption=None, norm_captions=None):
-        """Parse instruction to determine movable and relevant objects.
+    def process_instruction(self, user_instr, goal_caption=None, norm_captions=None):
+        """Process user instruction to determine goal caption, normalised captions, 
+           movable and relevant objects.
         
         Args:
             user_instr: user instruction string
@@ -459,9 +437,14 @@ class ImaginationEngine():
         self.lang_model = None
         torch.cuda.empty_cache()
 
-        return movable_obj, relevant_objs, goal_caption, norm_captions
+        return {
+            'movable_obj': movable_obj,
+            'relevant_objs': relevant_objs,
+            'goal_caption': goal_caption,
+            'norm_captions': norm_captions
+        }
 
-    def _create_task_model(self, movable_obj, relevant_objs, user_instr, goal_caption, norm_captions):
+    def create_task_model(self, movable_obj, relevant_objs, user_instr, goal_caption, norm_captions):
         """Create task model with determined objects.
         
         Args:
@@ -768,7 +751,7 @@ if __name__ == "__main__":
     if goal_caption is not None:
         print('Using goal caption: ', goal_caption)
         print('Using normalising captions: ', norm_captions)
-    task_model = imagination.interpret_user_instr(user_instr, goal_caption=goal_caption, norm_captions=norm_captions)
+    task_model = imagination.create_task_model(user_instr, goal_caption=goal_caption, norm_captions=norm_captions)
     movable_best_pose = imagination.dream_best_pose(task_model)
     print(colored("Predicted pose for movable object:", "green"))
     print(movable_best_pose)
