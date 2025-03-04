@@ -133,7 +133,7 @@ class XMem_inference(object):
             # only give the first frame a mask
             if i == 0:
                 sam_masks = self.sam_segmentor.segment(data['rgb'], show_masks=show)
-                scene_mask = integrate_masks(sam_masks)
+                scene_mask = self._integrate_masks(sam_masks)
                 data['mask'] = scene_mask
 
             # inference
@@ -217,7 +217,7 @@ class XMem_inference(object):
                 sam_masks = self.sam_segmentor.segment(flipped_img, show_masks=show,
                                                        scene_bound_mask=np.rot90(torch.logical_not(out_scene_bound_masks[0]).cpu().numpy()))
 
-                scene_mask = integrate_masks(sam_masks)
+                scene_mask = self.integrate_masks(sam_masks)
                 scene_mask = np.rot90(scene_mask, 3)
                 data['mask'] = scene_mask
 
@@ -229,11 +229,11 @@ class XMem_inference(object):
                 index = associate_list.index(i)
 
                 # eliminate the duplicated components
-                pruned_mask = duplicate_prune(mask,
-                                              depth_data[index].cpu().numpy(),
-                                              T_WC_data[index].cpu().numpy(),
-                                              intrinsics,
-                                              scene_centre)
+                pruned_mask = self._duplicate_prune(mask,
+                                                    depth_data[index].cpu().numpy(),
+                                                    T_WC_data[index].cpu().numpy(),
+                                                    intrinsics,
+                                                    scene_centre)
 
                 # combined with out_scene_bound_masks
                 refined_mask = np.where(out_scene_bound_masks[index].cpu().numpy() == 255, 255, pruned_mask)
@@ -257,6 +257,60 @@ class XMem_inference(object):
                 cv2.imwrite(os.path.join(video_vis_dir, "rgb_%d.png" % i), mask_ori * 255)
 
         return refined_masks
+    
+    def _duplicate_prune(self, mask, depth, T_WC, intrinsics, scene_centre):
+        """
+        Eliminate the duplicated components, keep the closest one to the scene center.
+        :param mask: the mask to be refined
+        :param depth: the depth image
+        :param T_WC: the camera pose
+        :param intrinsics: the camera intrinsics
+        :param scene_centre: the scene centre
+        :return:
+        """
+        refined_mask = np.zeros_like(mask)
+        for i in np.unique(mask):
+            if i == 0:
+                continue
+
+            curr_mask = np.zeros_like(mask)
+            curr_mask[mask == i] = 255
+            num_comps, comps_img = cv2.connectedComponents(curr_mask.astype(np.uint8))
+            # cv2.imshow("curr_mask", curr_mask.astype(np.uint8))
+            if num_comps > 2:
+                min_distance = 10000
+                keep_comp_mask = None
+                for comp_idx in range(1, num_comps):
+                    comp_mask = comps_img == comp_idx
+                    comp_area = comp_mask.sum()
+                    if comp_area < 200:
+                        continue
+                    comp_depth = depth.copy()
+                    comp_depth[comp_mask == 0] = 0
+                    # project depth to 3D points
+                    depth_o3d = o3d.geometry.Image((comp_depth * 1000).astype(np.uint16))
+                    T_cw = np.linalg.inv(T_WC)
+                    o3d_intrinsics = o3d.camera.PinholeCameraIntrinsic(depth.shape[0], depth.shape[1], intrinsics)
+                    pcd = o3d.geometry.PointCloud.create_from_depth_image(depth_o3d, o3d_intrinsics, T_cw,
+                                                                        project_valid_depth_only=True)
+                    pcd_array = np.asarray(pcd.points)
+                    avg_point = np.mean(pcd_array, axis=0)
+                    distance = np.linalg.norm(avg_point - scene_centre)
+                    if distance < min_distance:
+                        keep_comp_mask = comp_mask
+                        min_distance = distance
+                if keep_comp_mask is not None:
+                    refined_mask[keep_comp_mask] = i
+
+                # cv2.imshow("comp_mask", keep_comp_mask.astype(np.uint8) * 255)
+                # cv2.waitKey(0)
+            else:
+                refined_mask[comps_img == 1] = i
+
+                # cv2.imshow("comp_mask", (comps_img == 1).astype(np.uint8) * 255)
+                # cv2.waitKey(0)
+
+        return refined_mask.astype(np.uint8)
 
     def free(self):
         """Safely free GPU memory"""
@@ -280,99 +334,47 @@ class XMem_inference(object):
         finally:
             torch.cuda.empty_cache()
 
-def integrate_masks(sam_masks):
-    out_mask = torch.zeros_like(sam_masks[0], dtype=torch.uint8)
-    for idx in range(len(sam_masks)):
-        out_mask[sam_masks[idx]] = idx
+    def _integrate_masks(self, sam_masks):
+        out_mask = torch.zeros_like(sam_masks[0], dtype=torch.uint8)
+        for idx in range(len(sam_masks)):
+            out_mask[sam_masks[idx]] = idx
 
-    return out_mask.cpu().numpy()
+        return out_mask.cpu().numpy()
 
 
-def duplicate_prune(mask, depth, T_WC, intrinsics, scene_centre):
-    """
-    Eliminate the duplicated components, keep the closest one to the scene center.
-    :param mask: the mask to be refined
-    :param depth: the depth image
-    :param T_WC: the camera pose
-    :param intrinsics: the camera intrinsics
-    :param scene_centre: the scene centre
-    :return:
-    """
-    refined_mask = np.zeros_like(mask)
-    for i in np.unique(mask):
-        if i == 0:
-            continue
 
-        curr_mask = np.zeros_like(mask)
-        curr_mask[mask == i] = 255
-        num_comps, comps_img = cv2.connectedComponents(curr_mask.astype(np.uint8))
-        # cv2.imshow("curr_mask", curr_mask.astype(np.uint8))
-        if num_comps > 2:
-            min_distance = 10000
-            keep_comp_mask = None
-            for comp_idx in range(1, num_comps):
-                comp_mask = comps_img == comp_idx
-                comp_area = comp_mask.sum()
-                if comp_area < 200:
-                    continue
-                comp_depth = depth.copy()
-                comp_depth[comp_mask == 0] = 0
-                # project depth to 3D points
-                depth_o3d = o3d.geometry.Image((comp_depth * 1000).astype(np.uint16))
-                T_cw = np.linalg.inv(T_WC)
-                o3d_intrinsics = o3d.camera.PinholeCameraIntrinsic(depth.shape[0], depth.shape[1], intrinsics)
-                pcd = o3d.geometry.PointCloud.create_from_depth_image(depth_o3d, o3d_intrinsics, T_cw,
-                                                                      project_valid_depth_only=True)
-                pcd_array = np.asarray(pcd.points)
-                avg_point = np.mean(pcd_array, axis=0)
-                distance = np.linalg.norm(avg_point - scene_centre)
-                if distance < min_distance:
-                    keep_comp_mask = comp_mask
-                    min_distance = distance
-            if keep_comp_mask is not None:
-                refined_mask[keep_comp_mask] = i
 
-            # cv2.imshow("comp_mask", keep_comp_mask.astype(np.uint8) * 255)
-            # cv2.waitKey(0)
-        else:
-            refined_mask[comps_img == 1] = i
+# def disconnected_prune(mask: np.array):
+#     """
+#     Eliminate the disconnected components, keep the largest one.
+#     :param mask:
+#     :param depth:
+#     :return:
+#     """
+#     refined_mask = np.zeros_like(mask)
+#     for i in np.unique(mask):
+#         if i == 0:
+#             # skip the background
+#             continue
 
-            # cv2.imshow("comp_mask", (comps_img == 1).astype(np.uint8) * 255)
-            # cv2.waitKey(0)
+#         curr_mask = np.zeros_like(mask)
+#         curr_mask[mask == i] = 255
+#         num_comps, comps_img = cv2.connectedComponents(curr_mask.astype(np.uint8))
+#         if num_comps > 2:
+#             max_area = 0
+#             keep_comp_mask = None
+#             for comp_idx in range(1, num_comps):
+#                 comp_mask = comps_img == comp_idx
+#                 comp_area = comp_mask.sum()
+#                 if comp_area < 200:
+#                     continue
+#                 if comp_area >= max_area:
+#                     keep_comp_mask = comp_mask
+#                     max_area = comp_area
+#             if keep_comp_mask is not None:
+#                 # if all components are too small, ignore this object
+#                 refined_mask[keep_comp_mask] = i
+#         else:
+#             refined_mask[comps_img == 1] = i
 
-    return refined_mask.astype(np.uint8)
-
-def disconnected_prune(mask: np.array):
-    """
-    Eliminate the disconnected components, keep the largest one.
-    :param mask:
-    :param depth:
-    :return:
-    """
-    refined_mask = np.zeros_like(mask)
-    for i in np.unique(mask):
-        if i == 0:
-            # skip the background
-            continue
-
-        curr_mask = np.zeros_like(mask)
-        curr_mask[mask == i] = 255
-        num_comps, comps_img = cv2.connectedComponents(curr_mask.astype(np.uint8))
-        if num_comps > 2:
-            max_area = 0
-            keep_comp_mask = None
-            for comp_idx in range(1, num_comps):
-                comp_mask = comps_img == comp_idx
-                comp_area = comp_mask.sum()
-                if comp_area < 200:
-                    continue
-                if comp_area >= max_area:
-                    keep_comp_mask = comp_mask
-                    max_area = comp_area
-            if keep_comp_mask is not None:
-                # if all components are too small, ignore this object
-                refined_mask[keep_comp_mask] = i
-        else:
-            refined_mask[comps_img == 1] = i
-
-    return refined_mask.astype(np.uint8)
+#     return refined_mask.astype(np.uint8)
