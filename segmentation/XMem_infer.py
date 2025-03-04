@@ -88,13 +88,19 @@ class XMem_inference(object):
         Returns:
             numpy.ndarray: Resized image.
         """
-        h, w = img.shape[:2]
-        new_w = (w * self.size // min(w, h))
-        new_h = (h * self.size // min(w, h))
-        if new_w != w or new_h != h:
-            interpolation = cv2.INTER_NEAREST if mask else cv2.INTER_AREA
-            img = cv2.resize(img, dsize=(new_w, new_h), interpolation=interpolation)
-        return img
+        height, width = img.shape[:2]  # Get the current height and width of the image
+        aspect_ratio = min(width, height)  # Determine the aspect ratio based on the smaller dimension
+
+        # Calculate new dimensions while maintaining the aspect ratio
+        new_width = (width * self.size) // aspect_ratio
+        new_height = (height * self.size) // aspect_ratio
+
+        # Resize the image only if the new dimensions differ from the original
+        if (new_width, new_height) != (width, height):
+            interpolation_method = cv2.INTER_NEAREST if mask else cv2.INTER_AREA  # Choose interpolation method based on mask
+            img = cv2.resize(img, dsize=(new_width, new_height), interpolation=interpolation_method)  # Resize the image
+
+        return img  # Return the resized image
 
     def inference(self, data):
         """Run inference on a single frame of RGB data.
