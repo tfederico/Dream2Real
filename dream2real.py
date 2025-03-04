@@ -553,41 +553,53 @@ class ImaginationEngine():
                 - movable_init_pose: initial pose of movable object
                 - phys_check: function to check physics validity of poses
         """
+        # Get the initial pose of the movable object from the task model
         movable_init_pose = task_model.movable_obj.pose
 
-        # Defining validity checks
+        # Define a function to compose multiple validity checks
         def compose_checks(checks):
             def composed_check(pose_batch, task_model, valid_so_far):
+                # Clone the current validity state
                 valid_so_far = valid_so_far.clone()
+                # Iterate through each check and update the validity state
                 for check in checks:
                     valid_so_far &= check(pose_batch, task_model, valid_so_far)
                 return valid_so_far
             return composed_check
 
+        # Check if physics validation is enabled and if cached renders are not being used
         if self.use_phys and not self.use_cache_renders:
-            # Setting up physics checking simulator
-            pyb_planner = pp
+            # Setting up the physics checking simulator
+            pyb_planner = pp  # Reference to the planning module
             if not self.embodied:
+                # Connect to the physics simulator without GUI if not in embodied mode
                 pyb_planner.connect(use_gui=False)
 
+            # Create a check for unsupervised collision detection and get handles for static and movable objects
             unsupcol_check, static_obj_handles, movable_handles = create_unsupcol_check(
                 pyb_planner, task_model, self.sample_res,
                 self.embodied, lazy_phys_mods=self.lazy_phys_mods
             )
             
+            # Store the handles for later use
             self.static_phys_handles = static_obj_handles
             self.movable_phys_handle = movable_handles[0]
             
+            # Define a shutdown function to disconnect the planner after checks
             shutdown_pyb = lambda pose_batch, task_model, valid_so_far: valid_so_far if pyb_planner.disconnect() else valid_so_far
             
+            # Determine the appropriate physics check based on whether the system is embodied
             if self.embodied:
-                phys_check = unsupcol_check
+                phys_check = unsupcol_check  # Use unsupervised collision check
             else:
+                # Compose checks for both unsupervised collision and shutdown
                 phys_check = compose_checks([unsupcol_check, shutdown_pyb])
         else:
+            # If physics checks are not needed, return a function that always returns valid
             all_valid = lambda pose_batch, task_model, valid_so_far: torch.ones(len(pose_batch), dtype=torch.bool)
             phys_check = all_valid
 
+        # Return the initial pose and the validity check function
         return movable_init_pose, phys_check
 
     def _find_best_pose(self, task_model, movable_init_pose, phys_check, vis_cost_vol):
