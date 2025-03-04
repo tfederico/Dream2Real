@@ -26,6 +26,11 @@ from PIL import Image
 
 class XMem_inference(object):
     def __init__(self, config_file=os.path.join(curr_dir_path, "XMem.yaml")):
+        """Initialize XMem inference components.
+
+        Args:
+            config_file (str): Path to the configuration file.
+        """
         super(XMem_inference, self).__init__()
         self.config = self.load_config(config_file)
         self.model_pth = self.config['model_pth']
@@ -42,7 +47,7 @@ class XMem_inference(object):
         print("XMem_inference initialized")
 
     def _init_components(self):
-        """Initialize XMem components"""
+        """Initialize XMem components for inference."""
         try:
             torch.autograd.set_grad_enabled(False)
             network = XMem(self.config, self.model_pth).cuda().eval()
@@ -57,6 +62,14 @@ class XMem_inference(object):
             raise
 
     def load_config(self, config_file):
+        """Load and process the configuration file.
+
+        Args:
+            config_file (str): Path to the configuration file.
+
+        Returns:
+            dict: Configuration settings as a dictionary.
+        """
         with open(config_file, 'r') as f:
             config = yaml.load(f, Loader=yaml.FullLoader)
         # Expand relative paths.
@@ -66,14 +79,32 @@ class XMem_inference(object):
         return config
 
     def resize_img(self, img, mask=False):
+        """Resize an image while maintaining its aspect ratio.
+
+        Args:
+            img (numpy.ndarray): The image to resize.
+            mask (bool): Boolean indicating if the image is a mask (affects interpolation method).
+
+        Returns:
+            numpy.ndarray: Resized image.
+        """
         h, w = img.shape[:2]
         new_w = (w * self.size // min(w, h))
         new_h = (h * self.size // min(w, h))
         if new_w != w or new_h != h:
-            img = cv2.resize(img, dsize=(new_w, new_h), interpolation=cv2.INTER_AREA if not mask else cv2.INTER_NEAREST)
+            interpolation = cv2.INTER_NEAREST if mask else cv2.INTER_AREA
+            img = cv2.resize(img, dsize=(new_w, new_h), interpolation=interpolation)
         return img
 
     def inference(self, data):
+        """Run inference on a single frame of RGB data.
+
+        Args:
+            data (dict): Dictionary containing 'rgb' and optional 'mask'.
+
+        Returns:
+            numpy.ndarray: The resulting mask after inference.
+        """
         rgb = data['rgb']
         msk = data['mask']
         shape = rgb.shape[:2]
@@ -110,6 +141,18 @@ class XMem_inference(object):
         return out_mask
 
     def segment(self, rgb_data, depth_data, out_dir=None, show=False, use_cache=False):
+        """Segment a sequence of RGB images.
+
+        Args:
+            rgb_data (list): List of RGB images.
+            depth_data (list): List of depth images.
+            out_dir (str): Output directory for saving masks.
+            show (bool): Whether to show visualization.
+            use_cache (bool): Whether to use cached results.
+
+        Returns:
+            list: List of segmentation masks.
+        """
         if use_cache:
             print("Using cached segmentations")
             refined_masks = []
@@ -166,6 +209,23 @@ class XMem_inference(object):
     def segment_associate(self, video_path, depth_data, T_WC_data, intrinsics,
                           out_dir, out_scene_bound_masks, scene_centre,
                           show=False, use_cache=False, debug=False):
+        """Segment video frames with association.
+
+        Args:
+            video_path (str): Path to video frames.
+            depth_data (list): List of depth images.
+            T_WC_data (list): Camera poses.
+            intrinsics (numpy.ndarray): Camera intrinsics.
+            out_dir (str): Output directory for saving masks.
+            out_scene_bound_masks (numpy.ndarray): Scene boundary masks.
+            scene_centre (numpy.ndarray): Scene center point.
+            show (bool): Whether to show visualization.
+            use_cache (bool): Whether to use cached results.
+            debug (bool): Whether to save debug info.
+
+        Returns:
+            list: List of processed masks.
+        """
         if use_cache:
             print("Using cached segmentations")
             refined_masks = []
@@ -217,7 +277,7 @@ class XMem_inference(object):
                 sam_masks = self.sam_segmentor.segment(flipped_img, show_masks=show,
                                                        scene_bound_mask=np.rot90(torch.logical_not(out_scene_bound_masks[0]).cpu().numpy()))
 
-                scene_mask = self.integrate_masks(sam_masks)
+                scene_mask = self._integrate_masks(sam_masks)
                 scene_mask = np.rot90(scene_mask, 3)
                 data['mask'] = scene_mask
 
@@ -335,11 +395,22 @@ class XMem_inference(object):
             torch.cuda.empty_cache()
 
     def _integrate_masks(self, sam_masks):
-        out_mask = torch.zeros_like(sam_masks[0], dtype=torch.uint8)
-        for idx in range(len(sam_masks)):
-            out_mask[sam_masks[idx]] = idx
+        """Integrate a list of SAM masks into a single mask.
 
-        return out_mask.cpu().numpy()
+        This function takes multiple binary masks generated by the SAM (Segment Anything Model)
+        and combines them into a single mask where each unique mask is assigned a unique index.
+
+        Args:
+            sam_masks (list): A list of binary masks from SAM segmentation, where each mask is a boolean array.
+
+        Returns:
+            numpy.ndarray: A single integrated mask where each region corresponds to a unique index.
+        """
+        out_mask = torch.zeros_like(sam_masks[0], dtype=torch.uint8)  # Initialize an output mask with the same shape as the first mask
+        for idx in range(len(sam_masks)):
+            out_mask[sam_masks[idx]] = idx  # Assign the index to the corresponding mask region
+
+        return out_mask.cpu().numpy()  # Return the integrated mask as a NumPy array
 
 
 
