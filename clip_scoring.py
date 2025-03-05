@@ -25,45 +25,60 @@ device = torch.device("cuda:0")
 CLIP_RES = 336
 
 
-def normalise_tensor(x):
-    x -= x.min()
-    x /= x.max()
-    return x
-
-def optimise_pose_grid(renderer,
-                       depths_gt,
-                       render_cam_pose_idx,
-                       task_model,
-                       data_dir,
-                       sample_res=None,
-                       phys_check=None,
-                       use_templates=False,
-                       scene_type=0,
-                       use_vis_pcds=False,
-                       use_cache_renders=False,
-                       smoothing=True,
-                       physics_only=False):
+def optimise_pose_grid(renderer, depths_gt, render_cam_pose_idx, task_model, data_dir, 
+                       sample_res=None, phys_check=None, use_templates=False, scene_type=0, 
+                       use_vis_pcds=False, use_cache_renders=False, smoothing=True):
 
     if sample_res is None:
         sample_res = [40, 40, 1, 1, 1, 1]
     pose_batch = sample_poses_grid(task_model, sample_res, scene_type=scene_type)
 
+    renders, valid_poses, valid_idxs = prepare_renders(use_cache_renders, data_dir, pose_batch, 
+                                                       task_model, phys_check, use_vis_pcds, 
+                                                       renderer, render_cam_pose_idx, depths_gt)
+
+    task_model.free_visual_models() # To save memory for CLIP.
+
+    print('Evaluating rendered images using CLIP...')
+    model, processor = load_clip_model()
+
+    captions, goal_caption, norm_captions = prepare_captions(task_model, use_templates)    
+    
+    print('Computing CLIP similarity score for each render...')
+    logits = calculate_clip_scores(model, processor, captions, renders, use_templates, norm_captions)
+
+    pose_scores, best_pose, best_render = get_best_pose_and_render(pose_batch.shape[0], valid_idxs, logits, 
+                                                                   smoothing, sample_res, renders, valid_poses)
+    
+
+    best_render = Image.fromarray(best_render)
+    best_render.save(os.path.join(data_dir, 'best_render.png'))
+    # show best render
+    best_render.show()
+
+    return best_pose.view(4, 4), pose_batch, pose_scores
+
+def prepare_renders(use_cache_renders, data_dir, pose_batch, task_model, phys_check, 
+                    use_vis_pcds, renderer, render_cam_pose_idx, depths_gt):
     if use_cache_renders:
         renders, valid_poses, valid_idxs = load_cached_renders(data_dir, pose_batch)
     else:
         valid_poses, valid_idxs = run_pre_render_checks(pose_batch, task_model, phys_check)
         renders = render_images(renderer, valid_poses, render_cam_pose_idx, depths_gt, task_model, use_vis_pcds)
 
-    task_model.free_visual_models() # To save memory for CLIP.
     # Clipifying images.
     renders = np.rot90(np.vstack(np.expand_dims(renders, axis=0)), k=1, axes=(1, 2))
     renders = np.split(renders, renders.shape[0], axis=0)
     renders = [render.squeeze(0) for render in renders]
+    
+    return renders, valid_poses, valid_idxs
 
-    print('Evaluating rendered images using CLIP...')
+def load_clip_model():
     model = CLIPModel.from_pretrained("openai/clip-vit-large-patch14-336").to(device)
     processor = CLIPProcessor.from_pretrained("openai/clip-vit-large-patch14-336")
+    return model, processor
 
+def prepare_captions(task_model, use_templates):
     goal_caption = task_model.goal_caption
     norm_captions = task_model.norm_captions
     if use_templates:
@@ -75,23 +90,27 @@ def optimise_pose_grid(renderer,
             captions += templated_norm_captions
     else:
         captions = [goal_caption] if norm_captions is None else [goal_caption] + norm_captions
+    return captions, goal_caption, norm_captions
 
+def calculate_clip_scores(model, processor, captions, renders, use_templates, norm_captions):
     # Split into batches of images to fit into memory.
     # OPT: optimise memory efficiency to allow for larger batch size and faster computation.
     total_memory_gb = torch.cuda.get_device_properties(device).total_memory / (1024 ** 3)
-    preproc_batch_size = 1024
     clip_batch_size = 128 if total_memory_gb > 20 else 32
     num_batches = int(torch.ceil(torch.tensor(len(renders) / clip_batch_size)).item())
     all_logits = []
-    print('Computing CLIP similarity score for each render...')
+
     with torch.no_grad(): # Here to save memory, but may need grad elsewhere in method.
         with tqdm(total=len(renders)) as pbar:
             for i in range(num_batches):
                 # OPT: do all text preproc at start.
-                inputs = processor(text=captions, images=renders[i * clip_batch_size : (i + 1) * clip_batch_size], return_tensors="pt", padding=True).to(device)
+                inputs = processor(text=captions, images=renders[i * clip_batch_size : (i + 1) * clip_batch_size], 
+                                   return_tensors="pt", padding=True).to(device)
 
                 new_pixel_values = inputs.pixel_values
-                batch_outputs = model(pixel_values=new_pixel_values, attention_mask=inputs.attention_mask, input_ids=inputs.input_ids)
+                batch_outputs = model(pixel_values=new_pixel_values, 
+                                      attention_mask=inputs.attention_mask, 
+                                      input_ids=inputs.input_ids)
                 batch_logits = batch_outputs.logits_per_image # Has shape (num_imgs, num_captions).
                 all_logits.append(batch_logits)
                 pbar.update(clip_batch_size if i < num_batches - 1 else len(renders) - (i * clip_batch_size))
@@ -116,7 +135,10 @@ def optimise_pose_grid(renderer,
                 norm_logits = all_logits[:, 1:].mean(dim=1)
                 logits = goal_logits / norm_logits
 
-    pose_scores = torch.zeros(pose_batch.shape[0])
+    return logits
+
+def get_best_pose_and_render(n_pos_scores, valid_idxs, logits, smoothing, sample_res, renders, valid_poses):
+    pose_scores = torch.zeros(n_pos_scores)
     pose_scores[valid_idxs] = logits
     # We want to create an array render_idxs of same shape as pose_scores which maps each valid pose back to corresponding index in renders.
     render_idxs = torch.zeros(pose_scores.shape[0], dtype=torch.long)
@@ -132,21 +154,7 @@ def optimise_pose_grid(renderer,
     best_pose_idx = torch.argmax(pose_scores).item()
     best_render = renders[render_idxs[best_pose_idx]]
     best_pose = valid_poses[render_idxs[best_pose_idx]]
-
-    best_render = Image.fromarray(best_render)
-    best_render.save(os.path.join(data_dir, 'best_render.png'))
-    # show best render
-    best_render.show()
-
-    # # Free CLIP.
-    # del model
-    # del processor
-    # gc.collect()
-    # torch.cuda.empty_cache()
-    # # Free renders.
-    # del renders
-
-    return best_pose.view(4, 4), pose_batch, pose_scores
+    return pose_scores, best_pose, best_render
 
 def load_cached_renders(data_dir, pose_batch):
     print('Using cached renders')
