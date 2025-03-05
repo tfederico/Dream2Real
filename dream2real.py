@@ -17,7 +17,7 @@ import pybullet_planning as pp
 import pdb
 from segmentation.XMem_infer import XMem_inference
 from vision_3d.geometry_utils import vis_cost_volume, vis_multiverse
-from vision_3d.physics_utils import create_unsupcol_check, get_phys_models
+from vision_3d.physics_utils import create_unsup_col_check, get_phys_models
 from vision_3d.camera_info import INTRINSICS_REALSENSE_1280
 from segmentation.sam_seg import get_thumbnail
 from reconstruction.train_ngp import build_vis_model
@@ -191,7 +191,7 @@ class ImaginationEngine():
         )
 
         # Build final scene model
-        self._build_visual_models(
+        self._build_scene_visual_models(
             scene_data['masks'], scene_data['num_objs'],
             scene_data['captions'], scene_data['thumbnails'],
             phys_models, init_poses, vis_models,
@@ -335,7 +335,7 @@ class ImaginationEngine():
 
         return captions, thumbnails
 
-    def _build_visual_models(self, masks, num_objs, captions, thumbnails, 
+    def _build_scene_visual_models(self, masks, num_objs, captions, thumbnails, 
                             phys_models, init_poses, vis_models,
                             rgbs, depths, opt_cam_poses, intrinsics):
         """Build final scene model with visual models.
@@ -369,7 +369,7 @@ class ImaginationEngine():
             self.scene_type, device=device
         )
 
-    def determine_movable_obj(self, user_instr):
+    def _determine_movable_obj(self, user_instr):
         """Determine which object is movable based on user instruction.
 
         Args:
@@ -385,7 +385,7 @@ class ImaginationEngine():
         movable_obj = self.scene_model.objs[movable_idx]
         return movable_obj, movable_idx
 
-    def determine_relevant_objs(self, norm_caption, movable_obj_idx):
+    def _determine_relevant_objs(self, norm_caption, movable_obj_idx):
         """Determine which objects are relevant to the task based on the normalised caption.
 
         Relevant means not a distractor. For example, relevant objects could include the plate where apple is to be
@@ -429,8 +429,8 @@ class ImaginationEngine():
             norm_captions = [norm_caption]
             
         # Determine relevant objects
-        movable_obj, movable_obj_idx = self.determine_movable_obj(user_instr)
-        relevant_objs = self.determine_relevant_objs(goal_caption, movable_obj_idx)
+        movable_obj, movable_obj_idx = self._determine_movable_obj(user_instr)
+        relevant_objs = self._determine_relevant_objs(goal_caption, movable_obj_idx)
 
         # Free language model
         del self.lang_model
@@ -483,7 +483,7 @@ class ImaginationEngine():
             data_dir=self.data_dir
         )
 
-        task_bground_obj, task_bground_masks = TaskModel.create_task_bground_obj(
+        task_bground_obj, task_bground_masks = TaskModel.create_task_relevant_obj(
             self.scene_model,
             movable_obj,
             relevant_objs,
@@ -576,7 +576,7 @@ class ImaginationEngine():
                 pyb_planner.connect(use_gui=False)
 
             # Create a check for unsupervised collision detection and get handles for static and movable objects
-            unsupcol_check, static_obj_handles, movable_handles = create_unsupcol_check(
+            unsup_col_check, static_obj_handles, movable_handles = create_unsup_col_check(
                 pyb_planner, task_model, self.sample_res,
                 self.embodied, lazy_phys_mods=self.lazy_phys_mods
             )
@@ -590,10 +590,10 @@ class ImaginationEngine():
             
             # Determine the appropriate physics check based on whether the system is embodied
             if self.embodied:
-                phys_check = unsupcol_check  # Use unsupervised collision check
+                phys_check = unsup_col_check  # Use unsupervised collision check
             else:
                 # Compose checks for both unsupervised collision and shutdown
-                phys_check = compose_checks([unsupcol_check, shutdown_pyb])
+                phys_check = compose_checks([unsup_col_check, shutdown_pyb])
         else:
             # If physics checks are not needed, return a function that always returns valid
             all_valid = lambda pose_batch, task_model, valid_so_far: torch.ones(len(pose_batch), dtype=torch.bool)
@@ -614,11 +614,7 @@ class ImaginationEngine():
         Returns:
             best_pose: best pose for movable object
         """
-        # Choose renderer
-        if self.use_vis_pcds and not self.use_cache_goal_pose:
-            self.renderer = PointCloudRenderer()
-        else:
-            self.renderer = renderer(self.data_dir, task_model)
+        self._choose_renderer(task_model)
 
         # Get best pose
         if self.use_cache_goal_pose:
@@ -635,7 +631,6 @@ class ImaginationEngine():
                 scene_type=self.scene_type, use_vis_pcds=self.use_vis_pcds,
                 use_cache_renders=self.use_cache_renders,
                 smoothing=self.spatial_smoothing,
-                physics_only=self.physics_only
             )
             np.savetxt(os.path.join(self.data_dir, 'goal_pose.txt'), best_pose.cpu().numpy())
             np.savetxt(os.path.join(self.data_dir, 'pose_batch.txt'), pose_batch.cpu().numpy())
@@ -649,6 +644,13 @@ class ImaginationEngine():
             )
 
         return best_pose
+
+    def _choose_renderer(self, task_model):
+        # Choose renderer
+        if self.use_vis_pcds and not self.use_cache_goal_pose:
+            self.renderer = PointCloudRenderer()
+        else:
+            self.renderer = renderer(self.data_dir, task_model)
 
     def _visualize_results(self, task_model, pose_scores, pose_batch, best_pose, movable_init_pose):
         """Visualize pose optimization results.
