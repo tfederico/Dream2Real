@@ -229,7 +229,7 @@ def get_phys_models(depths, cam_poses, intrinsics, masks, num_objs, scene_bounds
 
 # OPT: pyBullet has satCollision (separating axis theorem), maybe faster.
 # OPT: maybe faster if not doing pairwise.
-def create_unsupcol_check(pyb_planner, task_model, sample_res, embodied, unsup_thresh=0.02, lazy_phys_mods=True, stability_check=True):
+def create_unsup_col_check(pyb_planner, task_model, sample_res, embodied, unsup_thresh=0.02, lazy_phys_mods=True, stability_check=True):
     static_obj_handles = [] # Used later in pipeline for collision checking.
     movable_handles = [] # Used later in pipeline for collision checking.
     phys_obj_list = [task_model.task_bground_obj, task_model.movable_obj] if lazy_phys_mods else task_model.scene_model.objs
