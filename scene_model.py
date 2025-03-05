@@ -57,7 +57,7 @@ class TaskModel():
 
     # Need to: create training img dataset where each image has following pixels masked out:
     #   Any obj not in relevant_objs (i.e. mask out distractors), and also movable_obj
-    def create_task_bground_obj(scene_model, movable_obj, relevant_objs, out_scene_bound_masks, save_dir,
+    def create_task_relevant_obj(scene_model, movable_obj, relevant_objs, out_scene_bound_masks, save_dir,
                                 use_vis_pcds=False, pcds_type=None, single_view_idx=0, render_distractors=False,
                                 use_cache=False, data_dir=None):
         if use_cache:
