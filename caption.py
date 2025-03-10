@@ -17,20 +17,44 @@ os.environ['BITSANDBYTES_NOWELCOME'] = '1'
 
 class Captioner():
     def __init__(self, topdown, device='cuda:0', read_cache=False, cache_path=None):
-        quantization_config = BitsAndBytesConfig(load_in_8bit=True)
-        self.processor = Blip2Processor.from_pretrained("Salesforce/blip2-opt-2.7b-coco")
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            self.model = Blip2ForConditionalGeneration.from_pretrained(
-                "Salesforce/blip2-opt-2.7b-coco", quantization_config=quantization_config, device_map='auto',
-            )
         self.batch_size = 100
         self.read_cache = read_cache
         self.cache_path = cache_path
         self.topdown = topdown
+        self.device = device
+        
+        # Initialize processor and model as None first
+        self.processor = None
+        self.model = None
+        
+        # Then load them if needed
+        if not read_cache:
+            self._init_models()
+
+    def _init_models(self):
+        """Initialize the processor and model"""
+        try:
+            quantization_config = BitsAndBytesConfig(load_in_8bit=True)
+            self.processor = Blip2Processor.from_pretrained("Salesforce/blip2-opt-2.7b-coco")
+            
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                self.model = Blip2ForConditionalGeneration.from_pretrained(
+                    "Salesforce/blip2-opt-2.7b-coco", 
+                    quantization_config=quantization_config, 
+                    device_map='auto',
+                )
+        except Exception as e:
+            print(f"Error initializing models: {e}")
+            raise
 
     # imgs is a list of PIL images.
     def caption(self, imgs):
+        """Caption the given images"""
+        # Initialize models if they haven't been initialized
+        if self.processor is None or self.model is None:
+            self._init_models()
+
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             with torch.no_grad():
@@ -49,16 +73,32 @@ class Captioner():
                 captions = [caption.strip() for caption in captions]
                 return captions
 
-    # Return a caption for each obj, aggregated across frames.
-    # lang_model is only for aggregation across views.
-    # Input RGBs are in HWC format.
-    # For scene_masks, 0 means inside scene, 1 means outside scene.
-    def caption_objs(self, num_objs, rgbs, masks, lang_model, scene_masks, topdown, multi_view=True, single_view_idx=0):
+    def get_object_captions(self, num_objs, rgbs, masks, scene_masks, topdown, multi_view=True, single_view_idx=0):
+        """Get individual captions for each object from each view.
+        
+        Args:
+            num_objs: number of objects to caption
+            rgbs: list of RGB images
+            masks: object masks
+            scene_masks: scene boundary masks
+            topdown: whether scene is viewed from top
+            multi_view: whether to use multiple views
+            single_view_idx: which view to use if single view
+            
+        Returns:
+            tuple: (all_captions, debug_thumbnails) where:
+                  all_captions is list of lists of captions for each object
+                  debug_thumbnails is list of thumbnail images
+        """
         if self.read_cache:
             print('Using cached captions')
             agg_captions = json.load(open(self.cache_path, 'r'))
             debug_thumbnails = [None] * len(agg_captions)
             return agg_captions, debug_thumbnails
+
+        # Initialize models if needed
+        if self.processor is None or self.model is None:
+            self._init_models()
 
         print('Creating masked object thumbnails for captioning...')
         all_thumbnails = []
@@ -157,22 +197,42 @@ class Captioner():
                 json.dump(agg_captions, open(self.cache_path, 'w'))
             return agg_captions, debug_thumbnails
 
+        return all_captions, debug_thumbnails
+
+    def aggregate_captions(self, all_captions, lang_model, silent=True):
+        """Aggregate captions across views using language model.
+        
+        Args:
+            all_captions: list of lists of captions for each object
+            lang_model: language model for aggregation
+            
+        Returns:
+            list: aggregated captions for each object
+        """
         print('Aggregating captions across views...')
         agg_captions = []
         for obj_captions in tqdm(all_captions):
-            agg_caption = lang_model.aggregate_captions_for_obj(obj_captions, silent=True)
+            agg_caption = lang_model.aggregate_captions_for_obj(obj_captions, silent=silent)
             agg_captions.append(agg_caption)
         agg_captions.insert(0, '__background__')
 
         if self.cache_path is not None:
             json.dump(agg_captions, open(self.cache_path, 'w'))
 
-        return agg_captions, debug_thumbnails
+        return agg_captions
 
     def free(self):
-        # print(f'Memory usage before freeing Captioner: {torch.cuda.memory_allocated(0)}')
-        del self.processor
-        del self.model
-        gc.collect()
-        torch.cuda.empty_cache()
-        # print(f'Memory usage after freeing Captioner: {torch.cuda.memory_allocated(0)}')
+        """Safely free GPU memory"""
+        try:
+            if hasattr(self, 'processor') and self.processor is not None:
+                del self.processor
+                self.processor = None
+            
+            if hasattr(self, 'model') and self.model is not None:
+                del self.model
+                self.model = None
+
+        except Exception as e:
+            print(f"Warning: Error during Captioner cleanup: {e}")
+        finally:
+            torch.cuda.empty_cache()

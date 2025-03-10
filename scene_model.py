@@ -1,14 +1,10 @@
-import os
-import pdb
-import cv2
-import numpy as np
 import torch
 from tqdm import tqdm
 
 from vision_3d.pcd_visual_model import get_vis_pcds
 from reconstruction.ngp_visual_model import get_vis_ngps
 from vision_3d.physics_utils import get_phys_models
-from segmentation.sam_seg import remove_components_at_edges
+
 
 class ObjectModel():
     def __init__(self, name, vis_model, phys_model, init_pose, thumbnail, mask_idx):
@@ -57,7 +53,7 @@ class TaskModel():
 
     # Need to: create training img dataset where each image has following pixels masked out:
     #   Any obj not in relevant_objs (i.e. mask out distractors), and also movable_obj
-    def create_task_bground_obj(scene_model, movable_obj, relevant_objs, out_scene_bound_masks, save_dir,
+    def create_task_relevant_obj(scene_model, movable_obj, relevant_objs, out_scene_bound_masks, save_dir,
                                 use_vis_pcds=False, pcds_type=None, single_view_idx=0, render_distractors=False,
                                 use_cache=False, data_dir=None):
         if use_cache:
