@@ -4,7 +4,8 @@ import re
 import ollama
 
 class LangModel():
-    def __init__(self, model_name="llama3.1", read_cache=True, cache_path=""):
+    # model names: deepseek-r1:32b, llama3.1
+    def __init__(self, model_name="deepseek-r1:32b", read_cache=True, cache_path=""):
         self.check_cache = read_cache
         self.cache_path = cache_path
         self.model_name = model_name
@@ -29,29 +30,29 @@ class LangModel():
             if not silent:
                 print(f'Submitting prompt to Ollama: "{user_instr}"')
 
-            try:
-                # Format messages for Ollama
-                messages = [
-                    {"role": "system", "content": system_instr},
-                    {"role": "user", "content": user_instr}
-                ]
-                
-                # Generate output using ollama client
-                response = ollama.chat(
-                    model=self.model_name,
-                    messages=messages,
-                    options={
-                        "temperature": temperature,
-                        "num_predict": 512
-                    }
-                )
-                
-                # Extract completion from response
-                completion = response["message"]["content"]
+            
+            # Format messages for Ollama
+            messages = [
+                {"role": "system", "content": system_instr},
+                {"role": "user", "content": user_instr}
+            ]
+            
+            # Generate output using ollama client
+            response = ollama.chat(
+                model=self.model_name,
+                messages=messages,
+                options={
+                    "temperature": temperature,
+                    "num_predict": 1024 if self.model_name == "deepseek-r1:32b" else 512
+                }
+            )
 
-            except Exception as e:
-                print(f"Error during prompt submission: {e}")
-                return ""
+            print(f'Returning raw response: "{response["message"]["content"]}"')
+            if self.model_name == "deepseek-r1:32b":
+                # remove thinking content
+                completion = response["message"]["content"].split("</think>")[1].strip()
+            else:
+                completion = response["message"]["content"]
 
             # Cache the result if caching is enabled
             if self.cache_path:
