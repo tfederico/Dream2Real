@@ -32,7 +32,7 @@ def get_phys_models(depths, cam_poses, intrinsics, masks, num_objs, scene_bounds
     if save_dir is not None:
         os.makedirs(save_dir, exist_ok=True)
 
-    init_poses, init_meshes = create_models(use_phys_tsdf, num_objs, use_vis_pcds, single_view_idx, depths, 
+    init_meshes, init_poses = create_models(use_phys_tsdf, num_objs, use_vis_pcds, single_view_idx, depths, 
                                             cam_poses, intrinsics, masks, scene_bounds, save_dir)
 
     if not embodied:
