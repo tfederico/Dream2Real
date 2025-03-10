@@ -329,6 +329,7 @@ class ImaginationEngine():
         # Free models
         del self.captioner
         self.captioner = None
+        self.lang_model.stop_ollama()
         del self.lang_model
         self.lang_model = None
         torch.cuda.empty_cache()
@@ -433,6 +434,7 @@ class ImaginationEngine():
         relevant_objs = self._determine_relevant_objs(goal_caption, movable_obj_idx)
 
         # Free language model
+        self.lang_model.stop_ollama()
         del self.lang_model
         self.lang_model = None
         torch.cuda.empty_cache()

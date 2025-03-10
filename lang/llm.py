@@ -1,22 +1,15 @@
 import os
 import json
 import re
-import torch
-from transformers import pipeline
-
+import ollama
 
 class LangModel():
-    def __init__(self, model_name="meta-llama/Llama-3.1-8B-Instruct", read_cache=True, cache_path=""):
+    def __init__(self, model_name="llama3.1", read_cache=True, cache_path=""):
         self.check_cache = read_cache
         self.cache_path = cache_path
         self.model_name = model_name
-
-        self.pipeline = pipeline(
-            "text-generation",
-            model=model_name,
-            model_kwargs={"torch_dtype": torch.bfloat16},
-            device_map="auto",
-        )
+        
+        # No need for explicit initialization with ollama library
 
         if cache_path:
             if os.path.exists(cache_path):
@@ -34,26 +27,27 @@ class LangModel():
             return completion
         else:
             if not silent:
-                print(f'Submitting prompt to LLaMA: "{user_instr}"')
+                print(f'Submitting prompt to Ollama: "{user_instr}"')
 
             try:
-                
+                # Format messages for Ollama
                 messages = [
                     {"role": "system", "content": system_instr},
-                    {"role": "user", "content": user_instr},
+                    {"role": "user", "content": user_instr}
                 ]
                 
-                # Generate output using the pipeline
-                outputs = self.pipeline(
-                    messages,
-                    max_new_tokens=512,  # Adjust as needed
-                    temperature=temperature,
-                    num_return_sequences=1,
-                    pad_token_id=self.pipeline.tokenizer.eos_token_id,
-                    do_sample=True,
+                # Generate output using ollama client
+                response = ollama.chat(
+                    model=self.model_name,
+                    messages=messages,
+                    options={
+                        "temperature": temperature,
+                        "num_predict": 512
+                    }
                 )
-
-                completion = outputs[0]["generated_text"][-1]["content"]
+                
+                # Extract completion from response
+                completion = response["message"]["content"]
 
             except Exception as e:
                 print(f"Error during prompt submission: {e}")
@@ -154,6 +148,9 @@ class LangModel():
         goal_caption = goal_caption.replace("Goal caption: ", "")
         norm_caption = norm_caption.replace("Normalising caption: ", "")
         return goal_caption, norm_caption
+    
+    def stop_ollama(self):
+        os.system(f"ollama stop {self.model_name}")
 
 
 if __name__ == '__main__':
