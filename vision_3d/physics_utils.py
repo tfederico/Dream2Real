@@ -26,196 +26,27 @@ def get_phys_models(depths, cam_poses, intrinsics, masks, num_objs, scene_bounds
                     save_dir=None, vis=False, use_cache=True, use_phys_tsdf=False, use_vis_pcds=False,
                     single_view_idx=0):
     if use_cache:
-        print('Using cached physics models')
-        init_poses = []
-        mesh_paths = []
-        if vis:
-            init_meshes = []
-        for obj_id in range(num_objs):
-            mesh_path = os.path.join(save_dir, f'mesh_{obj_id}.obj')
-            mesh_paths.append(mesh_path)
-            if vis:
-                mesh = o3d.io.read_triangle_mesh(mesh_path)
-                init_meshes.append(mesh)
-            init_pose = np.loadtxt(f'{save_dir}/init_pose_{obj_id}.txt')
-            init_pose = torch.tensor(init_pose).float()
-            init_poses.append(init_pose)
-        if vis:
-            for obj_id in range(num_objs):
-                mesh = init_meshes[obj_id]
-                mesh.compute_vertex_normals()
-                col = pastel_colors[obj_id % len(pastel_colors)] / 255.0
-                mesh.paint_uniform_color(col)
-            o3d.visualization.draw_geometries(init_meshes, mesh_show_back_face=True)
-        return mesh_paths, init_poses
+        return use_cached_models(vis, num_objs, save_dir)
 
     print('Creating physics models...')
     if save_dir is not None:
         os.makedirs(save_dir, exist_ok=True)
 
-    o3d_device = o3c.Device("CPU:0")
-    init_poses = []
-    if use_phys_tsdf:
-        init_meshes = []
-        for obj_id in range(num_objs):
-            obj_vbg = o3d.t.geometry.VoxelBlockGrid(attr_names=('tsdf', 'weight'), attr_dtypes=(o3c.float32, o3c.float32), attr_channels=((1), (1)),
-                                                    voxel_size=0.002, block_resolution=16, block_count=100000, device=o3d_device)
-            print('Building TSDF...')
-            if use_vis_pcds:
-                frame_range = [single_view_idx] * 4
-            else:
-                frame_range = range(len(depths))
-            for frame_id in tqdm(frame_range):
-                depth = depths[frame_id].clone().cpu().numpy()
-                cam_pose = cam_poses[frame_id].cpu().numpy()
-                mask = masks[frame_id].clone()
-                mask = mask == obj_id
-
-                # Erode mask to counter outliers due to mask imperfections.
-                # Only need to do this significantly for the background, to prevent essentially adding copy of fg obj to bg TSDF.
-                # TSDF does reasonably good job of eliminating outliers in foreground obj case.
-                if obj_id == 0:
-                    erosion_kernel_size = 20
-                else:
-                    erosion_kernel_size = 8
-                mask = mask.cpu().numpy().astype(np.uint8)
-                kernel = np.ones((erosion_kernel_size, erosion_kernel_size), np.uint8)
-                mask = cv2.erode(mask, kernel, iterations=1).astype(np.bool)
-
-                depth[~mask] = 0
-                height = depth.shape[0]
-                width = depth.shape[1]
-                depth = o3d.t.geometry.Image(o3c.Tensor((depth * 1000).astype(np.uint16)).to(o3d_device)).to(o3d_device)
-                T_cw = o3c.Tensor(np.linalg.inv(cam_pose)).to(o3d_device)
-                o3d_intrinsics = o3c.Tensor(intrinsics).to(o3d_device)
-
-                try:
-                    frustrum_block_coords = obj_vbg.compute_unique_block_coordinates(depth, o3d_intrinsics, T_cw, depth_scale=1000.0, depth_max=3.0)
-                    obj_vbg.integrate(frustrum_block_coords, depth, o3d_intrinsics, T_cw, depth_scale=1000.0, depth_max=3.0)
-                except RuntimeError as e:
-                    # This can happen when the current frame does not contain the current object.
-                    pass
-
-            init_mesh = obj_vbg.extract_triangle_mesh()
-            init_mesh = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(init_mesh.vertex.positions.cpu().numpy()), o3d.utility.Vector3iVector(init_mesh.triangle.indices.cpu().numpy()))
-
-            crop_bbox = o3d.geometry.AxisAlignedBoundingBox(min_bound=scene_bounds[0], max_bound=scene_bounds[1])
-            init_mesh = init_mesh.crop(crop_bbox)
-
-            # Remove very small disconnected components (due to depth noise and mask errors).
-            triangle_clusters, cluster_n_triangles, _ = init_mesh.cluster_connected_triangles()
-            keep_threshold = 0.02 * np.max(cluster_n_triangles)
-            removal_mask = [cluster_n_triangles[triangle_clusters[i]] < keep_threshold for i in range(len(triangle_clusters))]
-            init_mesh.remove_triangles_by_mask(removal_mask)
-
-            init_meshes.append(init_mesh)
-
-            init_pose = torch.eye(4)
-            init_pose[:3, 3] = torch.tensor(init_mesh.get_center())
-            init_poses.append(init_pose)
-
-            if save_dir is not None:
-                init_pose_out_path = os.path.join(save_dir, f'init_pose_{obj_id}.txt')
-                np.savetxt(init_pose_out_path, init_pose.numpy())
-
-    else:
-        crop_bbox = o3d.geometry.AxisAlignedBoundingBox(min_bound=scene_bounds[0], max_bound=scene_bounds[1])
-        frame_voxel_size = 0.002
-        obj_voxel_size = 0.002
-        outlier_neighbours = 30
-        outlier_std_ratio = 1.05
-        obj_pcds = []
-        for obj_id in range(num_objs):
-            obj_pcd = o3d.geometry.PointCloud()
-            for frame_id in range(len(depths)):
-                depth = depths[frame_id].clone().cpu().numpy()
-                cam_pose = cam_poses[frame_id].cpu().numpy()
-                mask = masks[frame_id].clone()
-                mask = mask == obj_id
-
-                # Erode mask to counter outliers due to mask imperfections.
-                mask = mask.cpu().numpy().astype(np.uint8)
-                kernel = np.ones((15, 15), np.uint8)
-                mask = cv2.erode(mask, kernel, iterations=1).astype(np.bool)
-
-                depth[~mask] = 0
-                height = depth.shape[0]
-                width = depth.shape[1]
-                depth = o3d.geometry.Image((depth * 1000).astype(np.uint16))
-                T_cw = np.linalg.inv(cam_pose)
-                o3d_intrinsics = o3d.camera.PinholeCameraIntrinsic(width, height, intrinsics)
-                frame_pcd = o3d.geometry.PointCloud.create_from_depth_image(depth, o3d_intrinsics, T_cw, depth_trunc=1000, depth_scale=1000)
-                frame_pcd = frame_pcd.crop(crop_bbox)
-                frame_pcd = frame_pcd.voxel_down_sample(frame_voxel_size)
-                obj_pcd += frame_pcd
-
-            _, inlier_idxs = obj_pcd.remove_statistical_outlier(nb_neighbors=outlier_neighbours, std_ratio=outlier_std_ratio)
-            obj_pcd = obj_pcd.select_by_index(inlier_idxs)
-            obj_pcd = obj_pcd.voxel_down_sample(obj_voxel_size)
-            obj_pcds.append(obj_pcd)
-
-            init_pose = torch.eye(4)
-            init_pose[:3, 3] = torch.tensor(obj_pcd.get_center())
-            init_poses.append(init_pose)
-
-            if save_dir is not None:
-                pcd_out_path = os.path.join(save_dir, f'obj_{obj_id}.pcd')
-                o3d.io.write_point_cloud(pcd_out_path, obj_pcd)
-                init_pose_out_path = os.path.join(save_dir, f'init_pose_{obj_id}.txt')
-                np.savetxt(init_pose_out_path, init_pose.numpy())
-
-        init_meshes = [create_mesh(pcd) for pcd in obj_pcds]
+    init_meshes, init_poses = create_models(use_phys_tsdf, num_objs, use_vis_pcds, single_view_idx, depths, 
+                                            cam_poses, intrinsics, masks, scene_bounds, save_dir)
 
     if not embodied:
         p.connect(p.DIRECT)
 
     mesh_paths = []
     if save_dir is not None:
-        for obj_id in range(num_objs):
-            mesh_out_concave_path = os.path.join(save_dir, f'mesh_concave_{obj_id}.obj')
-            o3d.io.write_triangle_mesh(mesh_out_concave_path, init_meshes[obj_id])
-            mesh_out_convex_path = os.path.join(save_dir, f'mesh_{obj_id}.obj')
-
-            # Get mesh size and rescale VHACD resolution appropriately.
-            # max_bound = init_meshes[obj_id].get_max_bound()
-            # min_bound = init_meshes[obj_id].get_min_bound()
-            # diagonal_size = np.sqrt(((max_bound - min_bound) ** 2).sum())
-            # vhacd_res = int(diagonal_size * 1000000)
-
-            if obj_id == 0: # Assume background
-                vhacd_res = 1000000
-            else:
-                vhacd_res = 10000
-
-            # Redirect noisy vhacd output to devnull instead of printing to console.
-            with open(os.devnull, 'w') as devnull:
-                with contextlib.redirect_stdout(devnull):
-                    p.vhacd(mesh_out_concave_path, mesh_out_convex_path, os.path.join(save_dir, f'mesh_vhacd_{obj_id}.log'), resolution=vhacd_res, depth=80, concavity=0.00002, gamma=0.00002, minVolumePerCH=0.00002, maxNumVerticesPerCH=64)
-            mesh_paths.append(mesh_out_convex_path)
+        mesh_paths = create_vhacd_meshes(num_objs, init_meshes, save_dir)
 
     if not embodied:
         p.disconnect()
 
     if vis:
-        vis_meshes = []
-        for obj_id in range(num_objs):
-            mesh_path = os.path.join(save_dir, f'mesh_concave_{obj_id}.obj')
-            mesh = o3d.io.read_triangle_mesh(mesh_path)
-            mesh.compute_vertex_normals()
-            col = pastel_colors[obj_id % pastel_colors.shape[0]] / 255.0
-            mesh.paint_uniform_color(col)
-            vis_meshes.append(mesh)
-        o3d.visualization.draw_geometries(vis_meshes, mesh_show_back_face=True)
-
-        vis_meshes = []
-        for obj_id in range(num_objs):
-            mesh_path = os.path.join(save_dir, f'mesh_{obj_id}.obj')
-            mesh = o3d.io.read_triangle_mesh(mesh_path)
-            mesh.compute_vertex_normals()
-            col = pastel_colors[obj_id % pastel_colors.shape[0]] / 255.0
-            mesh.paint_uniform_color(col)
-            vis_meshes.append(mesh)
-        o3d.visualization.draw_geometries(vis_meshes, mesh_show_back_face=True)
+        vis_mesh(num_objs, save_dir)
 
     # if vis:
         # for obj_id in range(num_objs):
@@ -227,9 +58,205 @@ def get_phys_models(depths, cam_poses, intrinsics, masks, num_objs, scene_bounds
     print('Physics models created.')
     return mesh_paths, init_poses
 
+def use_cached_models(vis, num_objs, save_dir):
+    print('Using cached physics models')
+    init_poses = []
+    mesh_paths = []
+    if vis:
+        init_meshes = []
+    for obj_id in range(num_objs):
+        mesh_path = os.path.join(save_dir, f'mesh_{obj_id}.obj')
+        mesh_paths.append(mesh_path)
+        if vis:
+            mesh = o3d.io.read_triangle_mesh(mesh_path)
+            init_meshes.append(mesh)
+        init_pose = np.loadtxt(f'{save_dir}/init_pose_{obj_id}.txt')
+        init_pose = torch.tensor(init_pose).float()
+        init_poses.append(init_pose)
+    if vis:
+        for obj_id in range(num_objs):
+            mesh = init_meshes[obj_id]
+            mesh.compute_vertex_normals()
+            col = pastel_colors[obj_id % len(pastel_colors)] / 255.0
+            mesh.paint_uniform_color(col)
+        o3d.visualization.draw_geometries(init_meshes, mesh_show_back_face=True)
+    return mesh_paths, init_poses
+
+def create_models(use_phys_tsdf, num_objs, use_vis_pcds, single_view_idx, depths, cam_poses, intrinsics, masks, scene_bounds, save_dir):
+    if use_phys_tsdf:
+        init_meshes, init_poses = create_tsdf_models(num_objs, use_vis_pcds, single_view_idx, depths, 
+                                                     cam_poses, intrinsics, masks, scene_bounds, save_dir)
+    else:
+        init_meshes, init_poses = create_pcd_models(num_objs, depths, cam_poses, intrinsics, masks, scene_bounds, save_dir)
+    return init_meshes, init_poses
+
+def create_tsdf_models(num_objs, use_vis_pcds, single_view_idx, depths, cam_poses, intrinsics, masks, scene_bounds, save_dir):
+    o3d_device = o3c.Device("CPU:0")
+    init_meshes = []
+    init_poses = []
+    for obj_id in range(num_objs):
+        obj_vbg = o3d.t.geometry.VoxelBlockGrid(attr_names=('tsdf', 'weight'), attr_dtypes=(o3c.float32, o3c.float32), attr_channels=((1), (1)),
+                                                voxel_size=0.002, block_resolution=16, block_count=100000, device=o3d_device)
+        print('Building TSDF...')
+        if use_vis_pcds:
+            frame_range = [single_view_idx] * 4
+        else:
+            frame_range = range(len(depths))
+        for frame_id in tqdm(frame_range):
+            depth = depths[frame_id].clone().cpu().numpy()
+            cam_pose = cam_poses[frame_id].cpu().numpy()
+            mask = masks[frame_id].clone()
+            mask = mask == obj_id
+
+            # Erode mask to counter outliers due to mask imperfections.
+            # Only need to do this significantly for the background, to prevent essentially adding copy of fg obj to bg TSDF.
+            # TSDF does reasonably good job of eliminating outliers in foreground obj case.
+            if obj_id == 0:
+                erosion_kernel_size = 20
+            else:
+                erosion_kernel_size = 8
+            mask = mask.cpu().numpy().astype(np.uint8)
+            kernel = np.ones((erosion_kernel_size, erosion_kernel_size), np.uint8)
+            mask = cv2.erode(mask, kernel, iterations=1).astype(np.bool)
+
+            depth[~mask] = 0
+            depth = o3d.t.geometry.Image(o3c.Tensor((depth * 1000).astype(np.uint16)).to(o3d_device)).to(o3d_device)
+            T_cw = o3c.Tensor(np.linalg.inv(cam_pose)).to(o3d_device)
+            o3d_intrinsics = o3c.Tensor(intrinsics).to(o3d_device)
+
+            try:
+                frustrum_block_coords = obj_vbg.compute_unique_block_coordinates(depth, o3d_intrinsics, T_cw, depth_scale=1000.0, depth_max=3.0)
+                obj_vbg.integrate(frustrum_block_coords, depth, o3d_intrinsics, T_cw, depth_scale=1000.0, depth_max=3.0)
+            except RuntimeError as e:
+                # This can happen when the current frame does not contain the current object.
+                pass
+
+        init_mesh = obj_vbg.extract_triangle_mesh()
+        init_mesh = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(init_mesh.vertex.positions.cpu().numpy()), o3d.utility.Vector3iVector(init_mesh.triangle.indices.cpu().numpy()))
+
+        crop_bbox = o3d.geometry.AxisAlignedBoundingBox(min_bound=scene_bounds[0], max_bound=scene_bounds[1])
+        init_mesh = init_mesh.crop(crop_bbox)
+
+        # Remove very small disconnected components (due to depth noise and mask errors).
+        triangle_clusters, cluster_n_triangles, _ = init_mesh.cluster_connected_triangles()
+        keep_threshold = 0.02 * np.max(cluster_n_triangles)
+        removal_mask = [cluster_n_triangles[triangle_clusters[i]] < keep_threshold for i in range(len(triangle_clusters))]
+        init_mesh.remove_triangles_by_mask(removal_mask)
+
+        init_meshes.append(init_mesh)
+
+        init_pose = torch.eye(4)
+        init_pose[:3, 3] = torch.tensor(init_mesh.get_center())
+        init_poses.append(init_pose)
+
+        if save_dir is not None:
+            init_pose_out_path = os.path.join(save_dir, f'init_pose_{obj_id}.txt')
+            np.savetxt(init_pose_out_path, init_pose.numpy())
+
+    return init_meshes, init_poses
+
+def create_pcd_models(num_objs, depths, cam_poses, intrinsics, masks, scene_bounds, save_dir):
+    init_meshes = []
+    init_poses = []
+    crop_bbox = o3d.geometry.AxisAlignedBoundingBox(min_bound=scene_bounds[0], max_bound=scene_bounds[1])
+    frame_voxel_size = 0.002
+    obj_voxel_size = 0.002
+    outlier_neighbours = 30
+    outlier_std_ratio = 1.05
+    obj_pcds = []
+    for obj_id in range(num_objs):
+        obj_pcd = o3d.geometry.PointCloud()
+        for frame_id in range(len(depths)):
+            depth = depths[frame_id].clone().cpu().numpy()
+            cam_pose = cam_poses[frame_id].cpu().numpy()
+            mask = masks[frame_id].clone()
+            mask = mask == obj_id
+
+            # Erode mask to counter outliers due to mask imperfections.
+            mask = mask.cpu().numpy().astype(np.uint8)
+            kernel = np.ones((15, 15), np.uint8)
+            mask = cv2.erode(mask, kernel, iterations=1).astype(np.bool)
+
+            depth[~mask] = 0
+            height = depth.shape[0]
+            width = depth.shape[1]
+            depth = o3d.geometry.Image((depth * 1000).astype(np.uint16))
+            T_cw = np.linalg.inv(cam_pose)
+            o3d_intrinsics = o3d.camera.PinholeCameraIntrinsic(width, height, intrinsics)
+            frame_pcd = o3d.geometry.PointCloud.create_from_depth_image(depth, o3d_intrinsics, T_cw, depth_trunc=1000, depth_scale=1000)
+            frame_pcd = frame_pcd.crop(crop_bbox)
+            frame_pcd = frame_pcd.voxel_down_sample(frame_voxel_size)
+            obj_pcd += frame_pcd
+
+        _, inlier_idxs = obj_pcd.remove_statistical_outlier(nb_neighbors=outlier_neighbours, std_ratio=outlier_std_ratio)
+        obj_pcd = obj_pcd.select_by_index(inlier_idxs)
+        obj_pcd = obj_pcd.voxel_down_sample(obj_voxel_size)
+        obj_pcds.append(obj_pcd)
+
+        init_pose = torch.eye(4)
+        init_pose[:3, 3] = torch.tensor(obj_pcd.get_center())
+        init_poses.append(init_pose)
+
+        if save_dir is not None:
+            pcd_out_path = os.path.join(save_dir, f'obj_{obj_id}.pcd')
+            o3d.io.write_point_cloud(pcd_out_path, obj_pcd)
+            init_pose_out_path = os.path.join(save_dir, f'init_pose_{obj_id}.txt')
+            np.savetxt(init_pose_out_path, init_pose.numpy())
+
+    init_meshes = [create_mesh(pcd) for pcd in obj_pcds]
+    return init_meshes, init_poses
+
+def create_vhacd_meshes(num_objs, init_meshes, save_dir):
+    mesh_paths = []
+    for obj_id in range(num_objs):
+        mesh_out_concave_path = os.path.join(save_dir, f'mesh_concave_{obj_id}.obj')
+        o3d.io.write_triangle_mesh(mesh_out_concave_path, init_meshes[obj_id])
+        mesh_out_convex_path = os.path.join(save_dir, f'mesh_{obj_id}.obj')
+
+        # Get mesh size and rescale VHACD resolution appropriately.
+        # max_bound = init_meshes[obj_id].get_max_bound()
+        # min_bound = init_meshes[obj_id].get_min_bound()
+        # diagonal_size = np.sqrt(((max_bound - min_bound) ** 2).sum())
+        # vhacd_res = int(diagonal_size * 1000000)
+
+        if obj_id == 0: # Assume background
+            vhacd_res = 1000000
+        else:
+            vhacd_res = 10000
+
+        # Redirect noisy vhacd output to devnull instead of printing to console.
+        with open(os.devnull, 'w') as devnull:
+            with contextlib.redirect_stdout(devnull):
+                p.vhacd(mesh_out_concave_path, mesh_out_convex_path, os.path.join(save_dir, f'mesh_vhacd_{obj_id}.log'), 
+                resolution=vhacd_res, depth=80, concavity=0.00002, gamma=0.00002, minVolumePerCH=0.00002, maxNumVerticesPerCH=64)
+        mesh_paths.append(mesh_out_convex_path)
+
+    return mesh_paths
+
+def vis_mesh(num_objs, save_dir):
+    vis_meshes = []
+    for obj_id in range(num_objs):
+        mesh_path = os.path.join(save_dir, f'mesh_concave_{obj_id}.obj')
+        mesh = o3d.io.read_triangle_mesh(mesh_path)
+        mesh.compute_vertex_normals()
+        col = pastel_colors[obj_id % pastel_colors.shape[0]] / 255.0
+        mesh.paint_uniform_color(col)
+        vis_meshes.append(mesh)
+    o3d.visualization.draw_geometries(vis_meshes, mesh_show_back_face=True)
+
+    vis_meshes = []
+    for obj_id in range(num_objs):
+        mesh_path = os.path.join(save_dir, f'mesh_{obj_id}.obj')
+        mesh = o3d.io.read_triangle_mesh(mesh_path)
+        mesh.compute_vertex_normals()
+        col = pastel_colors[obj_id % pastel_colors.shape[0]] / 255.0
+        mesh.paint_uniform_color(col)
+        vis_meshes.append(mesh)
+    o3d.visualization.draw_geometries(vis_meshes, mesh_show_back_face=True)
+
 # OPT: pyBullet has satCollision (separating axis theorem), maybe faster.
 # OPT: maybe faster if not doing pairwise.
-def create_unsupcol_check(pyb_planner, task_model, sample_res, embodied, unsup_thresh=0.02, lazy_phys_mods=True, stability_check=True):
+def create_unsup_col_check(pyb_planner, task_model, sample_res, embodied, unsup_thresh=0.02, lazy_phys_mods=True, stability_check=True):
     static_obj_handles = [] # Used later in pipeline for collision checking.
     movable_handles = [] # Used later in pipeline for collision checking.
     phys_obj_list = [task_model.task_bground_obj, task_model.movable_obj] if lazy_phys_mods else task_model.scene_model.objs
@@ -245,7 +272,7 @@ def create_unsupcol_check(pyb_planner, task_model, sample_res, embodied, unsup_t
             static_obj_handles.append(obj_handle)
 
     orig_movable_pos = p.getBasePositionAndOrientation(movable_handle)
-    def unsupcol_check(pose_batch, task_model, valid_so_far, disallow_regrasp=embodied):
+    def unsup_col_check(pose_batch, task_model, valid_so_far, disallow_regrasp=embodied):
         valid_so_far = valid_so_far.clone()
 
         pose_batch = pose_batch.view(-1, 4, 4)
@@ -374,7 +401,7 @@ def create_unsupcol_check(pyb_planner, task_model, sample_res, embodied, unsup_t
 
         return valid_so_far
 
-    return unsupcol_check, static_obj_handles, movable_handles
+    return unsup_col_check, static_obj_handles, movable_handles
 
 # OPT: can reduce depth parameter to Poisson.
 # OPT: one foreground mesh and one b
@@ -382,8 +409,7 @@ def create_mesh(pcd):
     pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.01, max_nn=30))
     pcd.orient_normals_consistent_tangent_plane(30)
 
-    mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
-        pcd, depth=5)
+    mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(pcd, depth=5)
 
     # Helps to crop Poission surface extrapolations.
     # vertices_to_remove = densities < np.quantile(densities, 0.1)

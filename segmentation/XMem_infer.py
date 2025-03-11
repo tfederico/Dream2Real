@@ -26,22 +26,50 @@ from PIL import Image
 
 class XMem_inference(object):
     def __init__(self, config_file=os.path.join(curr_dir_path, "XMem.yaml")):
+        """Initialize XMem inference components.
+
+        Args:
+            config_file (str): Path to the configuration file.
+        """
         super(XMem_inference, self).__init__()
         self.config = self.load_config(config_file)
         self.model_pth = self.config['model_pth']
         self.num_objects = self.config['num_objects']
-        torch.autograd.set_grad_enabled(False)
-        network = XMem(self.config, self.model_pth).cuda().eval()
-        self.mapper = MaskMapper()
-        self.processor = InferenceCore(network, config=self.config)
-        self.processor.set_all_labels(list(range(1, self.num_objects + 1)))
-        self.first_mask_loaded = self.config['first_mask_loaded']
-        self.size = self.config['size']
-        self.num_objects = self.config['num_objects']
-        self.sam_segmentor = Segmentor()
+        
+        # Initialize attributes as None first
+        self.processor = None
+        self.sam_segmentor = None
+        self.mapper = None
+        
+        # Initialize components
+        self._init_components()
+        
         print("XMem_inference initialized")
 
+    def _init_components(self):
+        """Initialize XMem components for inference."""
+        try:
+            torch.autograd.set_grad_enabled(False)
+            network = XMem(self.config, self.model_pth).cuda().eval()
+            self.mapper = MaskMapper()
+            self.processor = InferenceCore(network, config=self.config)
+            self.processor.set_all_labels(list(range(1, self.num_objects + 1)))
+            self.first_mask_loaded = self.config['first_mask_loaded']
+            self.size = self.config['size']
+            self.sam_segmentor = Segmentor()
+        except Exception as e:
+            print(f"Error initializing XMem components: {e}")
+            raise
+
     def load_config(self, config_file):
+        """Load and process the configuration file.
+
+        Args:
+            config_file (str): Path to the configuration file.
+
+        Returns:
+            dict: Configuration settings as a dictionary.
+        """
         with open(config_file, 'r') as f:
             config = yaml.load(f, Loader=yaml.FullLoader)
         # Expand relative paths.
@@ -51,14 +79,38 @@ class XMem_inference(object):
         return config
 
     def resize_img(self, img, mask=False):
-        h, w = img.shape[:2]
-        new_w = (w * self.size // min(w, h))
-        new_h = (h * self.size // min(w, h))
-        if new_w != w or new_h != h:
-            img = cv2.resize(img, dsize=(new_w, new_h), interpolation=cv2.INTER_AREA if not mask else cv2.INTER_NEAREST)
-        return img
+        """Resize an image while maintaining its aspect ratio.
+
+        Args:
+            img (numpy.ndarray): The image to resize.
+            mask (bool): Boolean indicating if the image is a mask (affects interpolation method).
+
+        Returns:
+            numpy.ndarray: Resized image.
+        """
+        height, width = img.shape[:2]  # Get the current height and width of the image
+        aspect_ratio = min(width, height)  # Determine the aspect ratio based on the smaller dimension
+
+        # Calculate new dimensions while maintaining the aspect ratio
+        new_width = (width * self.size) // aspect_ratio
+        new_height = (height * self.size) // aspect_ratio
+
+        # Resize the image only if the new dimensions differ from the original
+        if (new_width, new_height) != (width, height):
+            interpolation_method = cv2.INTER_NEAREST if mask else cv2.INTER_AREA  # Choose interpolation method based on mask
+            img = cv2.resize(img, dsize=(new_width, new_height), interpolation=interpolation_method)  # Resize the image
+
+        return img  # Return the resized image
 
     def inference(self, data):
+        """Run inference on a single frame of RGB data.
+
+        Args:
+            data (dict): Dictionary containing 'rgb' and optional 'mask'.
+
+        Returns:
+            numpy.ndarray: The resulting mask after inference.
+        """
         rgb = data['rgb']
         msk = data['mask']
         shape = rgb.shape[:2]
@@ -95,6 +147,18 @@ class XMem_inference(object):
         return out_mask
 
     def segment(self, rgb_data, depth_data, out_dir=None, show=False, use_cache=False):
+        """Segment a sequence of RGB images.
+
+        Args:
+            rgb_data (list): List of RGB images.
+            depth_data (list): List of depth images.
+            out_dir (str): Output directory for saving masks.
+            show (bool): Whether to show visualization.
+            use_cache (bool): Whether to use cached results.
+
+        Returns:
+            list: List of segmentation masks.
+        """
         if use_cache:
             print("Using cached segmentations")
             refined_masks = []
@@ -118,7 +182,7 @@ class XMem_inference(object):
             # only give the first frame a mask
             if i == 0:
                 sam_masks = self.sam_segmentor.segment(data['rgb'], show_masks=show)
-                scene_mask = integrate_masks(sam_masks)
+                scene_mask = self._integrate_masks(sam_masks)
                 data['mask'] = scene_mask
 
             # inference
@@ -151,6 +215,23 @@ class XMem_inference(object):
     def segment_associate(self, video_path, depth_data, T_WC_data, intrinsics,
                           out_dir, out_scene_bound_masks, scene_centre,
                           show=False, use_cache=False, debug=False):
+        """Segment video frames with association.
+
+        Args:
+            video_path (str): Path to video frames.
+            depth_data (list): List of depth images.
+            T_WC_data (list): Camera poses.
+            intrinsics (numpy.ndarray): Camera intrinsics.
+            out_dir (str): Output directory for saving masks.
+            out_scene_bound_masks (numpy.ndarray): Scene boundary masks.
+            scene_centre (numpy.ndarray): Scene center point.
+            show (bool): Whether to show visualization.
+            use_cache (bool): Whether to use cached results.
+            debug (bool): Whether to save debug info.
+
+        Returns:
+            list: List of processed masks.
+        """
         if use_cache:
             print("Using cached segmentations")
             refined_masks = []
@@ -202,7 +283,7 @@ class XMem_inference(object):
                 sam_masks = self.sam_segmentor.segment(flipped_img, show_masks=show,
                                                        scene_bound_mask=np.rot90(torch.logical_not(out_scene_bound_masks[0]).cpu().numpy()))
 
-                scene_mask = integrate_masks(sam_masks)
+                scene_mask = self._integrate_masks(sam_masks)
                 scene_mask = np.rot90(scene_mask, 3)
                 data['mask'] = scene_mask
 
@@ -214,11 +295,11 @@ class XMem_inference(object):
                 index = associate_list.index(i)
 
                 # eliminate the duplicated components
-                pruned_mask = duplicate_prune(mask,
-                                              depth_data[index].cpu().numpy(),
-                                              T_WC_data[index].cpu().numpy(),
-                                              intrinsics,
-                                              scene_centre)
+                pruned_mask = self._duplicate_prune(mask,
+                                                    depth_data[index].cpu().numpy(),
+                                                    T_WC_data[index].cpu().numpy(),
+                                                    intrinsics,
+                                                    scene_centre)
 
                 # combined with out_scene_bound_masks
                 refined_mask = np.where(out_scene_bound_masks[index].cpu().numpy() == 255, 255, pruned_mask)
@@ -242,110 +323,138 @@ class XMem_inference(object):
                 cv2.imwrite(os.path.join(video_vis_dir, "rgb_%d.png" % i), mask_ori * 255)
 
         return refined_masks
+    
+    def _duplicate_prune(self, mask, depth, T_WC, intrinsics, scene_centre):
+        """
+        Eliminate the duplicated components, keep the closest one to the scene center.
+        :param mask: the mask to be refined
+        :param depth: the depth image
+        :param T_WC: the camera pose
+        :param intrinsics: the camera intrinsics
+        :param scene_centre: the scene centre
+        :return:
+        """
+        refined_mask = np.zeros_like(mask)
+        for i in np.unique(mask):
+            if i == 0:
+                continue
+
+            curr_mask = np.zeros_like(mask)
+            curr_mask[mask == i] = 255
+            num_comps, comps_img = cv2.connectedComponents(curr_mask.astype(np.uint8))
+            # cv2.imshow("curr_mask", curr_mask.astype(np.uint8))
+            if num_comps > 2:
+                min_distance = 10000
+                keep_comp_mask = None
+                for comp_idx in range(1, num_comps):
+                    comp_mask = comps_img == comp_idx
+                    comp_area = comp_mask.sum()
+                    if comp_area < 200:
+                        continue
+                    comp_depth = depth.copy()
+                    comp_depth[comp_mask == 0] = 0
+                    # project depth to 3D points
+                    depth_o3d = o3d.geometry.Image((comp_depth * 1000).astype(np.uint16))
+                    T_cw = np.linalg.inv(T_WC)
+                    o3d_intrinsics = o3d.camera.PinholeCameraIntrinsic(depth.shape[0], depth.shape[1], intrinsics)
+                    pcd = o3d.geometry.PointCloud.create_from_depth_image(depth_o3d, o3d_intrinsics, T_cw,
+                                                                        project_valid_depth_only=True)
+                    pcd_array = np.asarray(pcd.points)
+                    avg_point = np.mean(pcd_array, axis=0)
+                    distance = np.linalg.norm(avg_point - scene_centre)
+                    if distance < min_distance:
+                        keep_comp_mask = comp_mask
+                        min_distance = distance
+                if keep_comp_mask is not None:
+                    refined_mask[keep_comp_mask] = i
+
+                # cv2.imshow("comp_mask", keep_comp_mask.astype(np.uint8) * 255)
+                # cv2.waitKey(0)
+            else:
+                refined_mask[comps_img == 1] = i
+
+                # cv2.imshow("comp_mask", (comps_img == 1).astype(np.uint8) * 255)
+                # cv2.waitKey(0)
+
+        return refined_mask.astype(np.uint8)
 
     def free(self):
-        self.sam_segmentor.free()
-        # print(f'Memory usage before freeing XMem: {torch.cuda.memory_allocated(0)}')
-        self.processor.network.cpu()
-        del self.mapper
-        del self.processor
-        gc.collect()
-        torch.cuda.empty_cache()
-        # print(f'Memory usage after freeing XMem: {torch.cuda.memory_allocated(0)}')
+        """Safely free GPU memory"""
+        try:
+            if hasattr(self, 'sam_segmentor') and self.sam_segmentor is not None:
+                self.sam_segmentor.free()
+                self.sam_segmentor = None
+            
+            if hasattr(self, 'processor') and self.processor is not None:
+                if hasattr(self.processor, 'network'):
+                    self.processor.network.cpu()
+                del self.processor
+                self.processor = None
+            
+            if hasattr(self, 'mapper'):
+                del self.mapper
+                self.mapper = None
+                
+        except Exception as e:
+            print(f"Warning: Error during XMem cleanup: {e}")
+        finally:
+            torch.cuda.empty_cache()
 
-def integrate_masks(sam_masks):
-    out_mask = torch.zeros_like(sam_masks[0], dtype=torch.uint8)
-    for idx in range(len(sam_masks)):
-        out_mask[sam_masks[idx]] = idx
+    def _integrate_masks(self, sam_masks):
+        """Integrate a list of SAM masks into a single mask.
 
-    return out_mask.cpu().numpy()
+        This function takes multiple binary masks generated by the SAM (Segment Anything Model)
+        and combines them into a single mask where each unique mask is assigned a unique index.
+
+        Args:
+            sam_masks (list): A list of binary masks from SAM segmentation, where each mask is a boolean array.
+
+        Returns:
+            numpy.ndarray: A single integrated mask where each region corresponds to a unique index.
+        """
+        # Initialize an output mask with the same shape as the first mask
+        integrated_mask = torch.zeros_like(sam_masks[0], dtype=torch.uint8)
+
+        # Iterate through each mask and assign a unique index
+        for index, mask in enumerate(sam_masks):
+            integrated_mask[mask] = index  # Assign the index to the corresponding mask region
+
+        return integrated_mask.cpu().numpy()  # Return the integrated mask as a NumPy array
 
 
-def duplicate_prune(mask, depth, T_WC, intrinsics, scene_centre):
-    """
-    Eliminate the duplicated components, keep the closest one to the scene center.
-    :param mask: the mask to be refined
-    :param depth: the depth image
-    :param T_WC: the camera pose
-    :param intrinsics: the camera intrinsics
-    :param scene_centre: the scene centre
-    :return:
-    """
-    refined_mask = np.zeros_like(mask)
-    for i in np.unique(mask):
-        if i == 0:
-            continue
 
-        curr_mask = np.zeros_like(mask)
-        curr_mask[mask == i] = 255
-        num_comps, comps_img = cv2.connectedComponents(curr_mask.astype(np.uint8))
-        # cv2.imshow("curr_mask", curr_mask.astype(np.uint8))
-        if num_comps > 2:
-            min_distance = 10000
-            keep_comp_mask = None
-            for comp_idx in range(1, num_comps):
-                comp_mask = comps_img == comp_idx
-                comp_area = comp_mask.sum()
-                if comp_area < 200:
-                    continue
-                comp_depth = depth.copy()
-                comp_depth[comp_mask == 0] = 0
-                # project depth to 3D points
-                depth_o3d = o3d.geometry.Image((comp_depth * 1000).astype(np.uint16))
-                T_cw = np.linalg.inv(T_WC)
-                o3d_intrinsics = o3d.camera.PinholeCameraIntrinsic(depth.shape[0], depth.shape[1], intrinsics)
-                pcd = o3d.geometry.PointCloud.create_from_depth_image(depth_o3d, o3d_intrinsics, T_cw,
-                                                                      project_valid_depth_only=True)
-                pcd_array = np.asarray(pcd.points)
-                avg_point = np.mean(pcd_array, axis=0)
-                distance = np.linalg.norm(avg_point - scene_centre)
-                if distance < min_distance:
-                    keep_comp_mask = comp_mask
-                    min_distance = distance
-            if keep_comp_mask is not None:
-                refined_mask[keep_comp_mask] = i
 
-            # cv2.imshow("comp_mask", keep_comp_mask.astype(np.uint8) * 255)
-            # cv2.waitKey(0)
-        else:
-            refined_mask[comps_img == 1] = i
+# def disconnected_prune(mask: np.array):
+#     """
+#     Eliminate the disconnected components, keep the largest one.
+#     :param mask:
+#     :param depth:
+#     :return:
+#     """
+#     refined_mask = np.zeros_like(mask)
+#     for i in np.unique(mask):
+#         if i == 0:
+#             # skip the background
+#             continue
 
-            # cv2.imshow("comp_mask", (comps_img == 1).astype(np.uint8) * 255)
-            # cv2.waitKey(0)
+#         curr_mask = np.zeros_like(mask)
+#         curr_mask[mask == i] = 255
+#         num_comps, comps_img = cv2.connectedComponents(curr_mask.astype(np.uint8))
+#         if num_comps > 2:
+#             max_area = 0
+#             keep_comp_mask = None
+#             for comp_idx in range(1, num_comps):
+#                 comp_mask = comps_img == comp_idx
+#                 comp_area = comp_mask.sum()
+#                 if comp_area < 200:
+#                     continue
+#                 if comp_area >= max_area:
+#                     keep_comp_mask = comp_mask
+#                     max_area = comp_area
+#             if keep_comp_mask is not None:
+#                 # if all components are too small, ignore this object
+#                 refined_mask[keep_comp_mask] = i
+#         else:
+#             refined_mask[comps_img == 1] = i
 
-    return refined_mask.astype(np.uint8)
-
-def disconnected_prune(mask: np.array):
-    """
-    Eliminate the disconnected components, keep the largest one.
-    :param mask:
-    :param depth:
-    :return:
-    """
-    refined_mask = np.zeros_like(mask)
-    for i in np.unique(mask):
-        if i == 0:
-            # skip the background
-            continue
-
-        curr_mask = np.zeros_like(mask)
-        curr_mask[mask == i] = 255
-        num_comps, comps_img = cv2.connectedComponents(curr_mask.astype(np.uint8))
-        if num_comps > 2:
-            max_area = 0
-            keep_comp_mask = None
-            for comp_idx in range(1, num_comps):
-                comp_mask = comps_img == comp_idx
-                comp_area = comp_mask.sum()
-                if comp_area < 200:
-                    continue
-                if comp_area >= max_area:
-                    keep_comp_mask = comp_mask
-                    max_area = comp_area
-            if keep_comp_mask is not None:
-                # if all components are too small, ignore this object
-                refined_mask[keep_comp_mask] = i
-        else:
-            refined_mask[comps_img == 1] = i
-
-    return refined_mask.astype(np.uint8)
+#     return refined_mask.astype(np.uint8)

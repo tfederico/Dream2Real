@@ -24,15 +24,16 @@ We introduce Dream2Real, a robotics framework which integrates vision-language m
 
 1. Ubuntu 22.04 (this code may also work with other versions but has not been tested).
 
-2. Hardware: we have tested on a 16 GB GPU (RTX 4080Ti SUPER). Only a single GPU is required. It is possible to run Dream2Real on GPUs with less memory by decreasing the batch sizes used, e.g. when batch-computing CLIP feature vectors for rendered images (at the cost of slower runtime). We also recommend leaving plenty of free space on your SSD/HDD before running, e.g. 60 GB if you wish to run every method/baseline on every dataset. This is because some intermediate output from the method takes a lot of space to store, e.g. video segmentation. However, you may delete this intermediate output after running Dream2Real, if you only care about the final goal pose.
+2. Hardware: we have tested on a 24 GB GPU (RTX 4090 SUPER). Only a single GPU is required. It is possible to run Dream2Real on GPUs with less memory by decreasing the batch sizes used, e.g. when batch-computing CLIP feature vectors for rendered images (at the cost of slower runtime). We also recommend leaving plenty of free space on your SSD/HDD before running, e.g. 60 GB if you wish to run every method/baseline on every dataset. This is because some intermediate output from the method takes a lot of space to store, e.g. video segmentation. However, you may delete this intermediate output after running Dream2Real, if you only care about the final goal pose.
 
-3. CUDA 12.5 and NVCC 11.5.
+3. CUDA 12.6 and NVCC 12.4.
 
 4. Miniconda (tested with conda 24.9.1).
 
-5. An OpenAI API key, with access to the [GPT-4 API](https://help.openai.com/en/articles/7102672-how-can-i-access-gpt-4), since we use this to process the user's language instruction. You will be prompted to enter this key during Dream2Real installation. It will be saved in a file `openai_key.sh` in the root directory of this repository. You may later move this file somewhere else. Remember to keep this key secret and do not publish it on GitHub. You can easily edit the code to use GPT-3.5 if you prefer.
+5. ~~An OpenAI API key, with access to the [GPT-4 API](https://help.openai.com/en/articles/7102672-how-can-i-access-gpt-4), since we use this to process the user's language instruction. You will be prompted to enter this key during Dream2Real installation. It will be saved in a file `openai_key.sh` in the root directory of this repository. You may later move this file somewhere else. Remember to keep this key secret and do not publish it on GitHub. You can easily edit the code to use GPT-3.5 if you prefer.~~
+We use LLaMA 3.2 3B to process the user's language instruction.
 
-7. The dependencies for Instant-NGP should already be installed before installing Dream2Real. If you have previously used Instant-NGP on your machine, then you have probably already satisfied this requirement. If you have not run Instant-NGP before, then you can follow the instructions [here](https://github.com/NVlabs/instant-ngp) to build and run it. Once you are satisfied that the Instant-NGP dependencies have been installed successfully, you may proceed. Our installation script will clone its own version of Instant-NGP automatically into the correct directory.
+6. The dependencies for Instant-NGP should already be installed before installing Dream2Real. If you have previously used Instant-NGP on your machine, then you have probably already satisfied this requirement. If you have not run Instant-NGP before, then you can follow the instructions [here](https://github.com/NVlabs/instant-ngp) to build and run it. Once you are satisfied that the Instant-NGP dependencies have been installed successfully, you may proceed. Our installation script will clone its own version of Instant-NGP automatically into the correct directory.
 
 ### One-Shot Installation
 
@@ -65,7 +66,7 @@ If the build of instant-ngp fails, you can run the steps manually, but make sure
 When running Dream2Real, remember to first activate the conda environment and load the OpenAI API key as an environment variable, like so:
 ```commandline
 conda activate dream2real
-source openai_key.sh
+~~source openai_key.sh~~
 ```
 
 The demo script can be run using the following format:

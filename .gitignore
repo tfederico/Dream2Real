@@ -8,4 +8,4 @@ src/
 models/
 dataset/
 method_out/
-openai_key.sh
+result.txt
