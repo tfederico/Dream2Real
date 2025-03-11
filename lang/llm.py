@@ -170,6 +170,7 @@ class OpenAIAPI(LangModel):
                         messages=message,
                         temperature=temperature,
                         max_tokens=200)
+
                     break
                 except (openai.APIError, openai.RateLimitError) as e:
                     tries -= 1
