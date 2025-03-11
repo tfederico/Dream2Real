@@ -2,15 +2,19 @@ import os
 import json
 import re
 import ollama
+from transformers import pipeline
+import torch
+from abc import abstractmethod, ABC
+import openai
+from openai import OpenAI
 
-class LangModel():
-    # model names: deepseek-r1:32b, llama3.1
-    def __init__(self, model_name="deepseek-r1:32b", read_cache=True, cache_path=""):
+
+class LangModel(ABC):
+    @abstractmethod
+    def __init__(self, model_name, read_cache=True, cache_path=""):
         self.check_cache = read_cache
         self.cache_path = cache_path
         self.model_name = model_name
-        
-        # No need for explicit initialization with ollama library
 
         if cache_path:
             if os.path.exists(cache_path):
@@ -18,50 +22,17 @@ class LangModel():
             else:
                 self.cache = {}
 
+    @abstractmethod
     def submit_prompt(self, system_instr, user_instr, temperature=0.6, silent=False):
-        if self.cache_path and self.check_cache and user_instr in self.cache.keys():
-            if not silent:
-                print(f'Using response found in cache for prompt: "{user_instr}"')
-            completion = self.cache[str((system_instr, user_instr))]
-            if not silent:
-                print(f'Returning response: "{completion}"')
-            return completion
-        else:
-            if not silent:
-                print(f'Submitting prompt to Ollama: "{user_instr}"')
+        pass
 
-            
-            # Format messages for Ollama
-            messages = [
-                {"role": "system", "content": system_instr},
-                {"role": "user", "content": user_instr}
-            ]
-            
-            # Generate output using ollama client
-            response = ollama.chat(
-                model=self.model_name,
-                messages=messages,
-                options={
-                    "temperature": temperature,
-                    "num_predict": 1024 if self.model_name == "deepseek-r1:32b" else 512
-                }
-            )
+    @abstractmethod
+    def prepare_message(self, system_instr, user_instr):
+        pass
 
-            print(f'Returning raw response: "{response["message"]["content"]}"')
-            if self.model_name == "deepseek-r1:32b":
-                # remove thinking content
-                completion = response["message"]["content"].split("</think>")[1].strip()
-            else:
-                completion = response["message"]["content"]
-
-            # Cache the result if caching is enabled
-            if self.cache_path:
-                self.cache[str((system_instr, user_instr))] = completion
-                json.dump(self.cache, open(self.cache_path, "w"), indent=4)
-
-            if not silent:
-                print(f'Returning response: "{completion}"')
-            return completion
+    @abstractmethod
+    def free_memory(self):
+        pass
 
     def get_principal_noun(self, caption):
         system_instr = (f'Suppose that you have an image caption describing a scene. What is the name of the most important '
@@ -150,13 +121,260 @@ class LangModel():
         norm_caption = norm_caption.replace("Normalising caption: ", "")
         return goal_caption, norm_caption
     
-    def stop_ollama(self):
+    def read_from_cache(self, silent, system_instr, user_instr):
+        if not silent:
+                print(f'Using response found in cache for prompt: "{user_instr}"')
+        completion = self.cache[str((system_instr, user_instr))]
+        if not silent:
+            print(f'Returning response: "{completion}"')
+        return completion
+    
+    def cache_results(self, system_instr, user_instr, completion):
+        # Cache the result if caching is enabled
+        if self.cache_path:
+            self.cache[str((system_instr, user_instr))] = completion
+            json.dump(self.cache, open(self.cache_path, "w"), indent=4)
+
+
+class OpenAIAPI(LangModel):
+    def __init__(self, model_name="gpt-4", read_cache=True, cache_path=""):
+        super().__init__(model_name, read_cache, cache_path)
+        self.client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+
+    def prepare_message(self, system_instr, user_instr):
+        messages = [
+                {"role": "system", "content": system_instr},
+                {"role": "user", "content": user_instr},
+            ]
+        return messages
+    
+    def submit_prompt(self, system_instr, user_instr, temperature=0.0, silent=False):
+        if self.cache_path and self.check_cache and (system_instr, user_instr) in self.cache.keys():
+            return self.read_from_cache(silent, system_instr, user_instr)
+        else:
+            if not silent:
+                print(f'Submitting prompt to OpenAI: "{user_instr}"')
+
+            prompt = f"{system_instr}\n{user_instr}"
+            max_len = 5000
+            if len(prompt) > max_len:
+                raise Exception(f"Prompt too long (length: {len(prompt)}). Max length is {max_len}.")
+            
+            message = self.prepare_message(system_instr, user_instr)
+
+            tries = 3
+            while tries > 0:
+                try:
+                    response = self.client.chat.completions.create(
+                        model=self.model_name,
+                        messages=message,
+                        temperature=temperature,
+                        max_tokens=200)
+                    break
+                except (openai.APIError, openai.RateLimitError) as e:
+                    tries -= 1
+                    if tries == 0:
+                        raise e
+                    time.sleep(0.5)
+
+            completion = response.choices[0].message.content # type: ignore
+
+            self.cache_results(system_instr, user_instr, completion)
+
+            if not silent:
+                print(f'Returning response: "{completion}"')
+            return completion
+        
+    def free_memory(self):
+        pass
+
+    # Override this method to use make one API call for multiple prompts
+    def get_relevant_obj_idxs(self, scene_caption, obj_captions, movable_obj_idx):
+        system_instr = f'Suppose that you are a robot. You are given a caption of a scene. Below, you are also given some object descriptions. For each object description, determine whether it is a distractor object. Return a separate line for each object containing Yes or No, where Yes means that it is a distractor. A distractor object is one which cannot possibly be one of the objects mentioned in the scene caption. Be careful that the object descriptions are based on low-quality images where the text is not easily identified, so ignore that part of the object descriptions. If the object description could plausibly describe an object in the scene, you must return No. Each line in the response should have the format: Object <number>: Yes/No. But if none of the objects in the scene are distractors, the final line should just be one word: "None".\n'
+        user_instr = f'Scene caption: "{scene_caption}"\n'
+        assert obj_captions[0] == "__background__"
+
+        # Temporarily swap object at idx 1 with movable object, so that LLM sees movable first. Autoregression can be weird.
+        obj_captions = obj_captions.copy()
+        temp = obj_captions[1]
+        obj_captions[1] = obj_captions[movable_obj_idx]
+        obj_captions[movable_obj_idx] = temp
+
+        for i, caption in enumerate(obj_captions[1:]): # Skip background
+            user_instr += f'Object {i + 1}: "{caption}"\n'
+
+        response = self.submit_prompt(system_instr=system_instr, user_instr=user_instr)
+        decisions = response.split("\n")
+
+        if decisions[-1] == "None":
+            return range(1, len(obj_captions))
+
+        relevant_idxs = [movable_obj_idx] # Movable always relevant
+        for i, decision in enumerate(decisions):
+            # Skip movable
+            if i == 0:
+                continue
+            if 'Yes' not in decision:
+                 # Add 1 to account for background
+                 # This undoes the temporary swap above.
+                relevant_idx = 1 if i + 1 == movable_obj_idx else i + 1
+                relevant_idxs.append(relevant_idx)
+        assert len(decisions) + 1 == len(obj_captions), "Error: LLM returned wrong number of decisions for distractor status for objects"
+        return relevant_idxs
+
+
+class HFLlama(LangModel):
+    def __init__(self, model_name="meta-llama/Llama-3.1-8B-Instruct", read_cache=True, cache_path=""):
+        super().__init__(model_name, read_cache, cache_path)
+
+        self.pipeline = pipeline(
+            "text-generation",
+            model=model_name,
+            model_kwargs={"torch_dtype": torch.bfloat16},
+            device_map="auto",
+        )
+
+    def prepare_message(self, system_instr, user_instr):
+        messages = [
+                {"role": "system", "content": system_instr},
+                {"role": "user", "content": user_instr},
+            ]
+        return messages
+
+    def submit_prompt(self, system_instr, user_instr, temperature=0.6, silent=False):
+        if self.cache_path and self.check_cache and (system_instr, user_instr) in self.cache.keys():
+            return self.read_from_cache(silent, system_instr, user_instr)
+        else:
+            if not silent:
+                print(f'Submitting prompt to LLaMA: "{user_instr}"')
+
+            messages = self.prepare_message(system_instr, user_instr)
+            
+            # Generate output using the pipeline
+            outputs = self.pipeline(
+                messages,
+                max_new_tokens=512,  # Adjust as needed
+                temperature=temperature,
+                num_return_sequences=1,
+                pad_token_id=self.pipeline.tokenizer.eos_token_id,
+                do_sample=True,
+            )
+
+            completion = outputs[0]["generated_text"][-1]["content"]
+
+            self.cache_results(system_instr, user_instr, completion)
+
+            if not silent:
+                print(f'Returning response: "{completion}"')
+            return completion
+        
+    def free_memory(self):
+        del self.pipeline
+        
+
+class OllamaLlama(LangModel):
+    def __init__(self, model_name="llama3.1", read_cache=True, cache_path=""):
+        super().__init__(model_name, read_cache, cache_path)
+        
+        # No need for explicit initialization with ollama library
+
+    def prepare_message(self, system_instr, user_instr):
+        messages = [
+                {"role": "system", "content": system_instr},
+                {"role": "user", "content": user_instr},
+            ]
+        return messages
+
+    def submit_prompt(self, system_instr, user_instr, temperature=0.6, silent=False):
+        if self.cache_path and self.check_cache and user_instr in self.cache.keys():
+            return self.read_from_cache(silent, system_instr, user_instr)
+        else:
+            if not silent:
+                print(f'Submitting prompt to Ollama ({self.model_name}): "{user_instr}"')
+
+            
+            # Format messages for Ollama
+            messages = [
+                {"role": "system", "content": system_instr},
+                {"role": "user", "content": user_instr}
+            ]
+            
+            # Generate output using ollama client
+            response = ollama.chat(
+                model=self.model_name,
+                messages=messages,
+                options={
+                    "temperature": temperature,
+                    "num_predict": 512
+                }
+            )
+
+            completion = response["message"]["content"]
+
+            self.cache_results(system_instr, user_instr, completion)
+
+            if not silent:
+                print(f'Returning response: "{completion}"')
+            return completion
+        
+    def free_memory(self):
         os.system(f"ollama stop {self.model_name}")
 
 
+class OllamaDeepSeek(LangModel):
+    def __init__(self, model_name="deepseek-r1:32b", read_cache=True, cache_path=""):
+        super().__init__(model_name, read_cache, cache_path)
+        # No need for explicit initialization with ollama library
+
+    def prepare_message(self, system_instr, user_instr):
+        messages = [
+                {"role": "user", "content": system_instr+" Be very concise. \n"+user_instr},
+            ]
+        return messages
+
+    def submit_prompt(self, system_instr, user_instr, temperature=0.6, silent=False):
+        if self.cache_path and self.check_cache and user_instr in self.cache.keys():
+            return self.read_from_cache(silent, system_instr, user_instr)
+        else:
+            if not silent:
+                print(f'Submitting prompt to Ollama ({self.model_name}): "{user_instr}"')
+
+            
+            # Format messages for Ollama
+            messages = [
+                {"role": "system", "content": system_instr},
+                {"role": "user", "content": user_instr}
+            ]
+            
+            # Generate output using ollama client
+            response = ollama.chat(
+                model=self.model_name,
+                messages=messages,
+                options={
+                    "temperature": temperature,
+                    "num_predict": 2048
+                }
+            )
+
+            try:
+                completion = response["message"]["content"].split("</think>")[1].strip()
+            except IndexError as e:
+                self.free_memory()
+                raise e
+                
+
+            self.cache_results(system_instr, user_instr, completion)
+
+            if not silent:
+                print(f'Returning response: "{completion}"')
+            return completion
+
+    def free_memory(self):
+        os.system(f"ollama stop {self.model_name}")
+
 if __name__ == '__main__':
     # Test the langmodel
-    model = LangModel(read_cache=False)
+    model = HFLlama(read_cache=False)
     import time
     start = time.time()
     result = model.submit_prompt("You are an helpful assistant.", "How many R are in strawberry?")

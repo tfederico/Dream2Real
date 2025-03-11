@@ -39,7 +39,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 total_memory_gb = torch.cuda.get_device_properties(device).total_memory / (1024 ** 3)
 egi_gpu = total_memory_gb > 20
 
-from lang.llm import LangModel
+from lang.llm import HFLlama, OllamaLlama, OllamaDeepSeek, OpenAIAPI
 
 class ImaginationEngine():
     """Imagination engine for generating task models from user instructions."""
@@ -133,11 +133,21 @@ class ImaginationEngine():
     def _init_lang_model(self):
         """Lazy initialization of language model"""
         if self.lang_model is None:
-            self.lang_model = LangModel(
-                cache_path=os.path.join(curr_dir_path, 'lang/cache.json'),
-                read_cache=self.cfg.use_cache_llm
-            )
-
+            self.lang_model = self._choose_llm()
+            
+    def _choose_llm(self):
+        """Choose language model based on config"""
+        # TODO: Uncomment this when llm option is added to config
+        # if self.cfg.llm == 'hfllama': 
+        #     return HFLlama()
+        # elif self.cfg.llm == 'ollama_llama':
+        #     return OllamaLlama()
+        # elif self.cfg.llm == 'ollama_deepseek':
+        #     return OllamaDeepSeek()
+        # elif self.cfg.llm == 'openai':
+        #     return OpenAIAPI()
+        return HFLlama()
+    
     def prepare_scene_data(self, raw_data=None):
         """Prepare scene data by segmenting and captioning.
         
@@ -321,7 +331,7 @@ class ImaginationEngine():
         self._init_lang_model()
 
         # Aggregate captions
-        captions = self.captioner.aggregate_captions(all_captions, self.lang_model, silent=True)
+        captions = self.captioner.aggregate_captions(all_captions, self.lang_model, multi_view=self.multi_view_captions, silent=True)
         captions_dict = {i: captions[i] for i in range(len(captions))}
         with open(os.path.join(self.data_dir, 'captions.json'), 'w') as f:
             json.dump(captions_dict, f)
@@ -329,7 +339,7 @@ class ImaginationEngine():
         # Free models
         del self.captioner
         self.captioner = None
-        self.lang_model.stop_ollama()
+        self.lang_model.free_memory()
         del self.lang_model
         self.lang_model = None
         torch.cuda.empty_cache()
@@ -434,7 +444,7 @@ class ImaginationEngine():
         relevant_objs = self._determine_relevant_objs(goal_caption, movable_obj_idx)
 
         # Free language model
-        self.lang_model.stop_ollama()
+        self.lang_model.free_memory()
         del self.lang_model
         self.lang_model = None
         torch.cuda.empty_cache()
