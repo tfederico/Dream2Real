@@ -189,17 +189,9 @@ class Captioner():
         debug_thumbnails = [obj_thumbnails[0] for obj_thumbnails in all_thumbnails]
         debug_thumbnails.insert(0, rgbs[0])
 
-        if not multi_view:
-            print('Using single-view captions')
-            agg_captions = [obj_captions[0] for obj_captions in all_captions]
-            agg_captions.insert(0, '__background__')
-            if self.cache_path is not None:
-                json.dump(agg_captions, open(self.cache_path, 'w'))
-            return agg_captions, debug_thumbnails
-
         return all_captions, debug_thumbnails
 
-    def aggregate_captions(self, all_captions, lang_model, silent=True):
+    def aggregate_captions(self, all_captions, lang_model, multi_view=True, silent=True):
         """Aggregate captions across views using language model.
         
         Args:
@@ -209,11 +201,15 @@ class Captioner():
         Returns:
             list: aggregated captions for each object
         """
-        print('Aggregating captions across views...')
-        agg_captions = []
-        for obj_captions in tqdm(all_captions):
-            agg_caption = lang_model.aggregate_captions_for_obj(obj_captions, silent=silent)
-            agg_captions.append(agg_caption)
+        if not multi_view:
+            print('Using single-view captions')
+            agg_captions = [obj_captions[0] for obj_captions in all_captions]
+        else:
+            print('Aggregating captions across views...')
+            agg_captions = []
+            for obj_captions in tqdm(all_captions):
+                agg_caption = lang_model.aggregate_captions_for_obj(obj_captions, silent=silent)
+                agg_captions.append(agg_caption)
         agg_captions.insert(0, '__background__')
 
         if self.cache_path is not None:
