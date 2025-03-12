@@ -5,7 +5,7 @@ import cv2
 import numpy as np
 import requests
 from tqdm import tqdm
-from transformers import Blip2Processor, Blip2ForConditionalGeneration
+from transformers import Blip2Processor, Blip2ForConditionalGeneration, AddedToken
 import torch
 import warnings
 import json
@@ -17,7 +17,7 @@ os.environ['BITSANDBYTES_NOWELCOME'] = '1'
 
 class Captioner():
     def __init__(self, topdown, device='cuda:0', read_cache=False, cache_path=None):
-        self.batch_size = 100
+        self.batch_size = 20
         self.read_cache = read_cache
         self.cache_path = cache_path
         self.topdown = topdown
@@ -34,16 +34,31 @@ class Captioner():
     def _init_models(self):
         """Initialize the processor and model"""
         try:
-            quantization_config = BitsAndBytesConfig(load_in_8bit=True)
-            self.processor = Blip2Processor.from_pretrained("Salesforce/blip2-opt-2.7b-coco")
+            # Change the quantization configuration to avoid float16/half precision
+            quantization_config = BitsAndBytesConfig(
+                load_in_8bit=True,
+            )
+            
+            processor = Blip2Processor.from_pretrained("Salesforce/blip2-opt-2.7b-coco")
             
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                self.model = Blip2ForConditionalGeneration.from_pretrained(
+                model = Blip2ForConditionalGeneration.from_pretrained(
                     "Salesforce/blip2-opt-2.7b-coco", 
                     quantization_config=quantization_config, 
                     device_map='auto',
+                    torch_dtype=torch.float32,  # Explicitly request float32
                 )
+
+            processor.num_query_tokens = model.config.num_query_tokens
+            image_token = AddedToken("<image>", normalized=False, special=True)
+            processor.tokenizer.add_tokens([image_token], special_tokens=True)
+
+            model.resize_token_embeddings(len(processor.tokenizer), pad_to_multiple_of=64) # pad for efficient computation
+            model.config.image_token_index = len(processor.tokenizer) - 1
+
+            self.processor = processor
+            self.model = model
         except Exception as e:
             print(f"Error initializing models: {e}")
             raise
