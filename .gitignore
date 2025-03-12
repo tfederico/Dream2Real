@@ -9,3 +9,4 @@ models/
 dataset/
 method_out/
 result.txt
+openai_key.sh
