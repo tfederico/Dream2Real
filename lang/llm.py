@@ -271,6 +271,55 @@ class HFLlama(LangModel):
         
     def free_memory(self):
         del self.pipeline
+
+
+class HFGemma(LangModel):
+    def __init__(self, model_name="google/gemma-3-4b-it", read_cache=True, cache_path=""):
+        super().__init__(model_name, read_cache, cache_path)
+
+        self.pipeline = pipeline(
+            "text-generation",
+            model=model_name,
+            model_kwargs={"torch_dtype": torch.bfloat16},
+            device_map="auto",
+        )
+
+    def prepare_message(self, system_instr, user_instr):
+        messages = [
+                {"role": "system", "content": system_instr},
+                {"role": "user", "content": user_instr},
+            ]
+        return messages
+
+    def submit_prompt(self, system_instr, user_instr, temperature=0.6, silent=False):
+        if self.cache_path and self.check_cache and (system_instr, user_instr) in self.cache.keys():
+            return self.read_from_cache(silent, system_instr, user_instr)
+        else:
+            if not silent:
+                print(f'Submitting prompt to LLaMA: "{user_instr}"')
+
+            messages = self.prepare_message(system_instr, user_instr)
+            
+            # Generate output using the pipeline
+            outputs = self.pipeline(
+                messages,
+                max_new_tokens=512,  # Adjust as needed
+                temperature=temperature,
+                num_return_sequences=1,
+                pad_token_id=self.pipeline.tokenizer.eos_token_id,
+                do_sample=True,
+            )
+
+            completion = outputs[0]["generated_text"][-1]["content"]
+
+            self.cache_results(system_instr, user_instr, completion)
+
+            if not silent:
+                print(f'Returning response: "{completion}"')
+            return completion
+        
+    def free_memory(self):
+        del self.pipeline
         
 
 class OllamaLlama(LangModel):
@@ -370,6 +419,55 @@ class OllamaDeepSeek(LangModel):
                 print(f'Returning response: "{completion}"')
             return completion
 
+    def free_memory(self):
+        os.system(f"ollama stop {self.model_name}")
+
+
+class OllamaGemma(LangModel):
+    def __init__(self, model_name="gemma3:12b", read_cache=True, cache_path=""):
+        super().__init__(model_name, read_cache, cache_path)
+        
+        # No need for explicit initialization with ollama library
+
+    def prepare_message(self, system_instr, user_instr):
+        messages = [
+                {"role": "system", "content": system_instr},
+                {"role": "user", "content": user_instr},
+            ]
+        return messages
+
+    def submit_prompt(self, system_instr, user_instr, temperature=0.6, silent=False):
+        if self.cache_path and self.check_cache and user_instr in self.cache.keys():
+            return self.read_from_cache(silent, system_instr, user_instr)
+        else:
+            if not silent:
+                print(f'Submitting prompt to Ollama ({self.model_name}): "{user_instr}"')
+
+            
+            # Format messages for Ollama
+            messages = [
+                {"role": "system", "content": system_instr},
+                {"role": "user", "content": user_instr}
+            ]
+            
+            # Generate output using ollama client
+            response = ollama.chat(
+                model=self.model_name,
+                messages=messages,
+                options={
+                    "temperature": temperature,
+                    "num_predict": 512
+                }
+            )
+
+            completion = response["message"]["content"]
+
+            self.cache_results(system_instr, user_instr, completion)
+
+            if not silent:
+                print(f'Returning response: "{completion}"')
+            return completion
+        
     def free_memory(self):
         os.system(f"ollama stop {self.model_name}")
 

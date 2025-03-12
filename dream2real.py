@@ -39,7 +39,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 total_memory_gb = torch.cuda.get_device_properties(device).total_memory / (1024 ** 3)
 egi_gpu = total_memory_gb > 20
 
-from lang.llm import HFLlama, OllamaLlama, OllamaDeepSeek, OpenAIAPI
+from lang.llm import HFLlama, OllamaLlama, OllamaDeepSeek, OpenAIAPI, OllamaGemma, HFGemma
 
 class ImaginationEngine():
     """Imagination engine for generating task models from user instructions."""
@@ -146,7 +146,12 @@ class ImaginationEngine():
         #     return OllamaDeepSeek()
         # elif self.cfg.llm == 'openai':
         #     return OpenAIAPI()
-        return HFLlama()
+        # elif self.cfg.llm == 'ollama_gemma':
+        #     return OllamaGemma()
+        # elif self.cfg.llm == 'hfgemma':
+        #     return HFGemma()
+
+        return HFGemma()
     
     def prepare_scene_data(self, raw_data=None):
         """Prepare scene data by segmenting and captioning.
